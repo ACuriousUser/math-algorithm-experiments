@@ -275,6 +275,89 @@ For non-overlapping {-1,1} constraints: λ_k = 6b_k/(9 - b_k²), c_i = a_{ki}·b
 
 ---
 
+## Critical Invariants and Insights
+
+### Invariant: x* on the ellipsoid surface
+
+Throughout the shrink-based explorations, we established that x* remains on
+the ellipsoid's surface after each operation:
+- **Hyperplane slice**: x* satisfies a·x* = b, so it stays on the surface
+- **Two-plane operation**: x* has x*_i ∈ {-1,1}, so it stays on the surface
+- **Initially**: all 2^N vertices are on the sphere of radius √N (cost = 1)
+This invariant holds regardless of which algorithm design we use.
+
+### Invariant: correct guess has maximum fitness
+
+For the fitness function Σ[log(s_i c_i) + log(1 - s_i c_i)] subject to Ac = b:
+- The correct guess s = x* has all sign pushes cooperating with constraints
+- The feasible region {c : s_i c_i > 0, s_i c_i < 1, Ac = b} is most spacious
+  for s = x* (least internal conflict)
+- Verified numerically: correct guess fitness -3.15 > wrong guess -3.65
+
+### Insight: signs come from constraints, not the objective
+
+For ANY symmetric strictly concave objective:
+- The KKT equilibrium has sign(c_i) = sign(μ_i)
+- μ_i = Σ_k λ_k a_{ki} (constraint forces)
+- Different objectives change λ values (and hence μ_i), but for
+  non-overlapping constraints with {-1,1} coefficients: c_i = a_i · b/k
+  regardless of the specific objective
+
+### Insight: two-plane push amplifies but doesn't create signal
+
+The two-plane operation (log(c_i²) barrier) pushes |c_i| from ~0.5 to ~0.775,
+making fitness differences between correct and wrong guesses LARGER. But it
+doesn't change which guess has the highest fitness — that's determined by the
+constraint structure. The two-plane is an amplifier, not a signal source.
+
+### Insight: uniqueness guarantee prevents local maxima
+
+Potential local maxima arise from "frustrated" variable pairs — e.g., a
+constraint x_i + x_j = 0 creates a mirror symmetry where correcting one
+variable individually makes the system infeasible. But if such a mirror
+exists, the solution isn't unique (both mirror images satisfy the constraint).
+The uniqueness guarantee implies additional constraints that break every
+such mirror, providing escape routes from every wrong guess.
+
+### Insight: blind operations push toward x*, not -x*
+
+Operations using constraint hyperplanes WITHOUT a guess (no sign constraints)
+naturally push the center toward x*:
+- Each constraint's centroid has positive dot product with all satisfying vertices
+- With uniqueness, centroids converge to x*
+- This means the "expand to -x*" design fails (operations go the wrong way)
+- But the guess-and-flip design works because the GUESS breaks the symmetry
+
+### Insight: N/3 constraints + N two-plane = 4N/3 total constraints
+
+We have MORE constraints than unknowns:
+- N/3 hyperplane constraints (each relating 3 variables)
+- N two-plane constraints (x_i ∈ {-1,1}, one per variable)
+- Total: 4N/3 > N
+The challenge is that the two-plane constraints are non-convex (disjunctive),
+making them hard to use in continuous optimization. The guess-and-flip
+approach handles this by converting two-plane constraints into sign
+constraints (convex) via the guess.
+
+### Insight: fitness function derivation is principled
+
+Each term comes from a real inequality constraint:
+- c_i ≤ 1 (or c_i ≥ -1) → log(1 - s_i c_i) barrier at the wall
+- s_i c_i ≥ 0 → log(s_i c_i) barrier at zero
+These are the standard log barriers for the analytic center of the polytope
+{c : s_i c_i ∈ (0,1), Ac = b}. The two-plane amplification (log(c_i²))
+is optional/extra — it strengthens the signal but isn't from a constraint.
+
+### Open insight: is simple ||As - b||² enough?
+
+The discrete residual ||As - b||² (just checking how many constraints the
+guess satisfies) might work as well as the continuous fitness. The continuous
+approach provides a smooth landscape (no local maxima), while the discrete
+approach is O(N) per evaluation (much faster). Whether the discrete landscape
+also lacks local maxima for our problem class is unknown.
+
+---
+
 ## Open Questions for Next Session
 
 1. **Rigorous no-local-maxima proof**: formalize the argument that uniqueness
