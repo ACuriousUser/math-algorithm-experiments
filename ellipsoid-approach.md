@@ -8,35 +8,62 @@ x* ∈ {-1,1}^N satisfying all constraints.
 
 ---
 
-## Algorithm Design: Expand Until Center Reaches Opposite Vertex
+## Algorithm Design Evolution
 
-### Core Idea
+### Design A: Expand Until Center Reaches -x* (DISPROVEN)
 
-Maintain a hyperellipsoid with x* always on its **surface**. Apply two
-operations that reshape the ellipsoid, causing the center to migrate AWAY
-from x*. At convergence: the ellipsoid becomes a perfect hypersphere centered
-at -x* (the vertex furthest from x*), with x* on the surface at distance 2√N.
+**Idea**: keep x* on the ellipsoid surface, expand until center reaches -x*.
+Then x* = -(center).
 
-**Solving**: x* = -(center). Negate every coordinate of the center.
+**Why it fails**: operations that don't know x* push the center TOWARD x*,
+not away from it. For a constraint a·x = b, the operation pushes the center
+toward the centroid of all satisfying vertices. This centroid has positive
+dot product with every satisfying vertex — so the center moves toward
+EVERY satisfying vertex (including x*), and away from their negations.
 
-### The Two Operations
+With multiple constraints: the centroids converge to x* itself (the unique
+intersection). The operations naturally push the center to x*, not to -x*.
+
+**Proof sketch**: For constraint a·x = b with satisfying vertices S:
+- The centroid of S lies on the hyperplane a·x = b
+- Any symmetric operation using only (a, b) pushes the center toward this centroid
+- For all v ∈ S: centroid · v = b/|S| > 0 (when b > 0)
+- So the center moves toward every v ∈ S, meaning toward x*
+
+**Key insight**: the constraint hyperplanes DEFINE x* (they intersect there).
+Operations that use these hyperplanes naturally push toward x*, not away.
+-x* does NOT satisfy the constraints, so nothing pushes toward it.
+
+### Design B: Collapse Until Center Reaches x* (CURRENT)
+
+**Idea**: keep x* on the ellipsoid surface, apply operations that push the
+center TOWARD x*. The ellipsoid collapses. At convergence: the ellipsoid
+has shrunk to a point at x*. The center IS x*.
+
+**Why this might work**: the operations naturally push toward x* (proven above).
+The question is whether they push ALL THE WAY to x* (collapsing the ellipsoid
+to a point), or get stuck at an interior point.
+
+---
+
+## The Two Operations
 
 **Operation 1: Hyperplane Slice**
 Given constraint a · x = b (with ~3 nonzero {-1,1} coefficients):
 - Reshapes the ellipsoid so its surface passes through the hyperplane
 - x* satisfies a · x* = b, so x* stays on the surface
+- The center shifts toward the centroid of satisfying vertices
 - Vertices NOT satisfying the constraint fall off the surface
-- The center shifts (away from removed vertices, toward the "surviving" side)
 
 **Operation 2: Two-Plane Operation**
 For variable i, using x_i ∈ {-1, 1}:
-- Reshapes the ellipsoid so its surface passes through BOTH planes x_i = +1
+- Reshapes the ellipsoid so its surface reaches both planes x_i = +1
   and x_i = -1 (without choosing a side)
 - x* has x*_i ∈ {-1,1}, so x* stays on the surface
-- Continuous (non-vertex) surface points with x_i ∉ {-1,1} are pushed off
-- The surface is constrained to reach both walls for variable i
+- Continuous (non-vertex) surface points with x_i ∉ {-1,1} are affected
 
 **Neither operation chooses a side or requires knowing x*.**
+**Both operations push the center toward x* (not away).**
 
 ---
 
@@ -44,29 +71,26 @@ For variable i, using x_i ∈ {-1, 1}:
 
 ### Invariant 1: x* is always on the surface
 
-**Why**: x* satisfies every hyperplane constraint (a · x* = b) and every
-two-plane constraint (x*_i ∈ {-1,1}). Both operations preserve points on
-the surface that satisfy the operation's constraint. Since x* satisfies all
-of them, x* remains on the surface throughout.
+x* satisfies every hyperplane constraint (a · x* = b) and every two-plane
+constraint (x*_i ∈ {-1,1}). Both operations preserve points on the surface
+that satisfy the operation's constraint. Since x* satisfies all of them,
+x* remains on the surface throughout.
 
-**Initially**: the sphere of radius √N centered at the origin has ALL
-vertices of {-1,1}^N on its surface (since ||v||² = N for every vertex v).
-x* is one of them.
+Initially: the sphere of radius √N centered at the origin has ALL vertices
+of {-1,1}^N on its surface (||v||² = N for every vertex v).
 
-### Invariant 2: non-solution vertices leave the surface
+### Invariant 2: center moves toward x*
 
-Each hyperplane slice removes vertices that don't satisfy the constraint.
-After all m hyperplane slices: only x* remains (by the uniqueness guarantee).
+Each hyperplane operation pushes the center toward the centroid of vertices
+satisfying the constraint. Since x* is always among the satisfying vertices,
+and other non-satisfying vertices are progressively removed, the centroid
+converges toward x*. The center follows.
 
-The two-plane operations provide additional constraints that complement
-the hyperplane slices (N two-plane operations + N/3 hyperplane operations
-= 4N/3 total constraints for N unknowns).
+### Invariant 3: non-solution vertices leave the surface
 
-### Invariant 3: center moves away from x*
-
-As non-x* vertices fall off the surface, the center of the ellipsoid
-shifts. It moves away from the "surviving" vertex x* (because the
-ellipsoid's mass is redistributed away from the removed side).
+Each hyperplane slice removes vertices not satisfying the constraint.
+After all m hyperplane slices: only x* remains (by uniqueness guarantee).
+The two-plane operations provide additional constraints.
 
 ---
 
@@ -76,113 +100,106 @@ ellipsoid's mass is redistributed away from the removed side).
 
 - **Shape**: perfect sphere of radius √N
 - **Center**: origin (0, 0, ..., 0)
-- **Surface**: all 2^N vertices of {-1,1}^N lie on the surface
+- **Surface**: all 2^N vertices of {-1,1}^N
 - **x* status**: on the surface (among all vertices)
 
 ### Intermediate States
 
 After applying some operations:
-- **Shape**: ellipsoid (asymmetric — operations break spherical symmetry)
-- **Center**: shifted away from origin, moving toward -x*
-- **Surface**: fewer vertices remain (those satisfying all applied constraints)
+- **Shape**: ellipsoid (operations break spherical symmetry)
+- **Center**: shifted from origin toward x*
+- **Surface**: fewer vertices remain
 - **x* status**: still on the surface (Invariant 1)
 
 ### Goal State
 
 After all operations converge:
-- **Shape**: perfect hypersphere (symmetry restored — only x* constrains
-  the shape, and one point doesn't break symmetry)
-- **Center**: at -x* (the vertex of {-1,1}^N furthest from x*)
-- **Radius**: 2√N (distance from -x* to x*)
-- **Surface**: x* is the unique vertex on the surface
-- **x* status**: on the surface, distance 2√N from center
-
-**Verification of goal state**:
-- Distance from -x* to x*: each coordinate differs by 2, so
-  ||x* - (-x*)|| = √(N · 4) = 2√N ✓
-- x* on surface: cost = (2√N)²/(2√N)² = 1 ✓
-- Sphere intersects all hyperplanes: distance from -x* to hyperplane
-  a·x = b is |a·(-x*) - b|/||a|| = 2|b|/√k ≤ 2√N for reasonable b ✓
-
-**Solving**: center = -x*, therefore **x* = -center**. Negate each coordinate.
+- **Shape**: degenerate ellipsoid (collapsed to a point)
+- **Center**: at x*
+- **Radius**: 0 (the ellipsoid IS x*)
+- **Surface**: just x*
+- **Solving**: center = x*. Read it off directly.
 
 ---
 
-## What We've Explored (and Abandoned)
+## Critical Open Question: Can the Center Reach x*?
 
-### Approach 1: Shrink Outer Ellipsoid (abandoned)
+The center must move from the origin to x* (distance √N). The ellipsoid
+must collapse from radius √N to radius 0.
 
-Start with sphere containing all vertices, shrink toward x*.
-**Problem**: the two-plane operation (reshape using x_i ∈ {-1,1}) is the
-identity for axis-aligned ellipsoids — it can't shrink the ellipsoid. With
-full Q matrix: it has some power but insufficient for scalability (O(N²)).
+### What works in its favor
 
-### Approach 2: Analytic Center / Max Inscribed Ellipsoid (abandoned)
+- **Direction**: operations push toward x* (proven). No wrong-direction risk.
+- **Enough operations**: N/3 hyperplane slices + N two-plane operations = 4N/3
+  operations for N unknowns. Each hyperplane slice reduces the effective
+  dimension by 1 (from N to 2N/3 after all slices). Two-plane operations
+  could provide the remaining N - N/3 = 2N/3 dimension reductions.
+- **Uniqueness**: x* is the ONLY vertex satisfying all constraints. Once all
+  other vertices are removed from the surface, the ellipsoid has no choice
+  but to collapse to x*.
 
-Maximize Σ log(1-c_i²) subject to Ac = b.
-**Problem**: this pushes the center TOWARD the cube center (away from walls),
-which is the opposite of what we want. The center never reaches a vertex.
-The sign extraction (x_i = sign(c_i)) is unreliable for weakly-constrained
-variables.
+### What might prevent it
 
-### Approach 3: Guess-and-Flip with Fitness (explored)
+- **Interior stagnation**: smooth operations might push the center TOWARD x*
+  without reaching it (asymptotic approach). The center gets stuck at the
+  centroid of continuous surface points, not at the discrete vertex x*.
+- **Two-plane weakness**: we showed earlier that the two-plane operation can
+  be the identity (for axis-aligned ellipsoids). It might not provide the
+  additional dimension reductions needed.
+- **Insufficient constraints**: with only N/3 hyperplane slices, the ellipsoid
+  lives in a 2N/3-dimensional subspace. Without additional collapse from
+  the two-plane operations, the center stays at the centroid of this
+  subspace (an interior point, not x*).
 
-Guess s ∈ {-1,1}^N, compute analytic center with sign constraints, compare
-fitness across guesses.
-**Problem**: requires solving a convex optimization per guess, O(N) guesses
-to converge — total cost O(N²) or O(N³). Also: unclear whether the
-continuous fitness is needed vs simple discrete checks.
+### Key sub-question
 
-### Current Approach: Surface-Preserving Expansion
+Can the two-plane operation (x_i ∈ {-1,1}) actually reduce the ellipsoid's
+dimension? In the shrink framework with axis-aligned Q: no (identity).
+With full Q (after hyperplane slices create off-diagonal correlations):
+possibly. The two-plane operation might tighten the ellipsoid using the
+correlations between variables, effectively determining some variables.
 
-Maintain x* on the surface, expand until center reaches -x*.
-**Status**: invariants verified, goal state well-defined. Open question:
-can the operations push the center all the way to -x*?
+This is the critical gap between "pushed in the right direction" and
+"actually arrives at x*."
 
 ---
 
-## Open Questions
+## What We've Explored (Archive)
 
-### Critical: Can the center reach -x*? (Question 3)
+### Approach 1: Shrink Outer Ellipsoid
+Start with sphere, shrink toward x*. Two-plane is identity for axis-aligned Q.
+With full Q: has some power but O(N²) storage. Cascade (L + Δ_i > 1)
+determines variables but might not complete for all instances.
 
-The center must move from the origin (start) to -x* (goal), a distance of √N.
-Key sub-questions:
+### Approach 2: Analytic Center / Max Inscribed Ellipsoid
+Maximize Σ log(1-c_i²) subject to Ac = b. Pushes center toward cube center
+(AWAY from walls). Sign extraction unreliable.
 
-a) Do the operations push the center in the right DIRECTION (toward -x*)?
-   Each operation pushes along its constraint normal. Do these directions
-   collectively point toward -x*?
+### Approach 3: Guess-and-Flip with Fitness
+Guess s, compute analytic center with sign constraints, compare fitness.
+No local maxima (with uniqueness guarantee). But expensive and may be
+overkill vs simpler discrete approaches.
 
-b) Do the operations have enough MAGNITUDE to move the center distance √N?
-   With 4N/3 operations, each moving O(1), total movement is O(N). This
-   exceeds √N for large N. But direction matters, not just magnitude.
-
-c) Can the center reach an actual VERTEX (-x*), or does it get stuck in
-   the interior? Smooth optimizations stay interior. But our operations
-   are geometric (slices, reshapes), not smooth optimizations. They might
-   have the power to reach the boundary.
-
-d) Does -x* even satisfy any constraints? A·(-x*) = -b ≠ b generally.
-   So -x* is NOT on the constraint hyperplanes. Can the center be at a
-   point that's not on the hyperplanes?
-
-   **This might require redefining the operations**: the hyperplane operation
-   constrains the SURFACE to intersect the hyperplane, not the CENTER to
-   lie on it. If the center is free (not forced onto hyperplanes), it CAN
-   reach -x*.
-
-### Secondary Questions
-
-4) Does the ellipsoid actually converge to a sphere at the goal state?
-5) How many operation-iterations are needed for convergence?
-6) Can this be computed in O(N) time?
-7) What is the precise mathematical definition of each operation
-   (how exactly does it reshape the ellipsoid)?
+### Approach 4: Expand to -x* (Design A above)
+Disproven: operations push toward x*, not -x*.
 
 ---
 
 ## Next Steps
 
-**Priority**: Investigate Question 3 — whether the operations can push
-the center from the origin to -x*. This requires precisely defining
-what each operation does to the ellipsoid (center, shape, and semi-axes)
-and tracing the center's trajectory through a sequence of operations.
+1. **Define the two-plane operation precisely for non-axis-aligned
+   ellipsoids**: what does it do to the full Q matrix? Does it reduce
+   the effective dimension?
+
+2. **Trace a small example (N=3 or N=6)**: apply all operations step
+   by step. Does the center converge to x*?
+
+3. **Characterize the gap**: after N/3 hyperplane slices, the ellipsoid
+   is (2N/3)-dimensional with center at the centroid. How far is this
+   centroid from x*? What additional operations are needed to close
+   the gap?
+
+4. **Consider hybrid approach**: use the ellipsoid operations to get
+   the center NEAR x* (determine sign(c_i) for most variables), then
+   use constraint propagation or verification for the remaining
+   ambiguous variables.
