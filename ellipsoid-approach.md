@@ -348,6 +348,20 @@ These are the standard log barriers for the analytic center of the polytope
 {c : s_i c_i ∈ (0,1), Ac = b}. The two-plane amplification (log(c_i²))
 is optional/extra — it strengthens the signal but isn't from a constraint.
 
+### Insight: information-theoretic constraints on m
+
+With {-1,1} coefficients and 3 variables per constraint:
+- Each constraint with |b| = 1 keeps 3 of 8 patterns → ~1.6 bits
+- Each constraint with |b| = 3 keeps 1 of 8 patterns → 3 bits
+- Need N bits total to determine all N variables
+- With m = N/3 all-|b|=1 constraints: ~N/2 bits. NOT enough for uniqueness!
+- Uniqueness with m = N/3 requires some |b| = 3 constraints (or overlapping
+  structure that effectively provides more bits through cascading)
+- Non-overlapping constraints with all |b| = 1 give 3^(N/3) solutions
+
+This means the "unique solution with N/3 constraints" assumption requires
+specific constraint structure — not all instances are solvable with N/3.
+
 ### Open insight: is simple ||As - b||² enough?
 
 The discrete residual ||As - b||² (just checking how many constraints the
