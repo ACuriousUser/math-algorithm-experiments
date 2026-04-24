@@ -149,6 +149,36 @@ Lasserre), problem-specific algebraic structure (lattice reduction,
 XOR-SAT via Gaussian elimination), or a different computational model
 (quantum).
 
+### 3.8 Why per-step cost is exponential in the glassy regime (density, not enumeration)
+
+When we say "per-step cost at Hamming-k VNS with k = Θ(N) is
+exponential," the cost isn't literally "enumerate all C(N, k)
+candidates." Random sampling from the k-flip neighborhood is an
+option. The exponential comes from somewhere else:
+
+- At a local minimum in the glassy regime, *density* of improving
+  k-flips drops exponentially in N as k grows.
+- At k = Θ(N), a random k-flip is essentially a random point on the
+  Boolean cube. A random point has expected fitness far worse than a
+  local minimum (roughly Θ(m) violated constraints vs. a few at the
+  minimum).
+- So the probability a random k-flip improves is exponentially small
+  in N. Expected samples before hitting an improver is exponential.
+
+**Randomness trades determinism for variance; it does not beat
+exponential.** The hard part isn't "check them all" — it's that
+improving k-flips are exponentially rare when the current state is a
+local minimum separated from better states by an OGP gap. Knowing
+*which* k-flip would improve requires non-local information about the
+cluster structure. That information is what BP, SP, and SoS extract
+(to varying depths); local sampling and local geometry don't have
+access to it.
+
+Practical consequence for our hybrid: bounded-k VNS (k = O(1) or
+O(log N)) is polytime but OGP-blocked. Unbounded-k is exponential for
+the density reason above. There is no escape hatch at the locality
+level — this is the precise shape of the wall.
+
 ---
 
 ## 4. The idea catalog
@@ -266,6 +296,79 @@ hierarchical decomposition — we may be able to reduce to a tractable
 sub-problem. Worth investigating per-instance, not as a general
 algorithm.
 
+### 4.6 Enhancements orthogonal to the core design
+
+These compose with any of the local-search or hybrid algorithms above.
+Each is independently stackable; a real implementation would likely use
+several at once.
+
+**Warm-starting the inner analytic-center solve.** A single bit flip
+in the guess `s` is a rank-one perturbation of the KKT system for the
+analytic center. Incremental update gives O(m²) per flip instead of
+the full O(Nm) re-solve. *Essential for scaling the hybrid to large N.*
+
+**Homotopy / barrier annealing.** Start with weak barriers (soft
+penalties on box and constraint violations) so the landscape is nearly
+convex and easy to optimize; gradually strengthen toward hard
+barriers. You end at the sharp-constraint problem with a much better
+starting point than random. Standard trick in non-convex optimization;
+straightforward to layer on the existing analytic-center solve.
+
+**Tabu list on the discrete side.** Remember the last T sign patterns
+visited; forbid the VNS/reflection perturbation from returning to any.
+Prevents cycling between two traps when reflection keeps mapping you
+back to the same basin. ~10 lines.
+
+**Simulated-annealing acceptance on top of hill climb.** Instead of
+strict improvement, accept worse moves with probability `exp(−ΔE/T)`
+and anneal T. Layers cleanly on top of the greedy operator. Classical,
+well-tuned, often dominates plain hill-climb in the moderate regime.
+
+**BP-informed initialization.** Even when BP doesn't converge to a
+full solution, a partial BP run gives per-variable confidence
+estimates. Seed the initial guess `s⁰` from `sign(BP-margin)` rather
+than uniform random. Reduces the number of basin hops needed. Cheap if
+BP is in the codebase anyway.
+
+**Decimation.** After any phase with confidence on some bits (from BP
+or from strong signs of the analytic center), *fix* those bits and
+recurse on the smaller residual problem. Each round kills ≥ 1
+variable; often triggers unit propagation. Fundamental technique in
+modern SAT.
+
+**Constraint-structure-biased VNS sampling.** When widening k, don't
+sample uniformly from `C(N, k)`. Restrict to bits that appear in
+currently-violated constraints. Candidate set becomes `O(m·d^k)`
+instead of `O(N^k)`. This is what makes WalkSAT scale; the same
+principle applies to our hybrid.
+
+**Spectral initialization.** The top eigenvector of `AᵀA` (or of a
+related operator on the factor graph) often correlates with `x*` for
+planted random instances. `sign(v)` as initial guess is a cheap
+one-time cost. Sometimes enough alone for easy instances; warm-starts
+the harder ones.
+
+**Population + crossover.** Run K parallel ILS trajectories.
+Periodically, when two are stuck, combine them: keep bits where they
+agree, resample bits where they disagree. Imports information across
+basins in a way single-state search can't.
+
+**Restart with memory.** When restarting, bias the new start *away*
+from regions already visited (tabu at the state level, not just move
+level). Reduces redundant exploration.
+
+**Adaptive barrier coupling between continuous and discrete states.**
+Currently the guess `s` fully determines the orthant for the analytic
+center. An alternative is "soft" coupling: penalty `λ Σ (c_i − s_i)²`
+that pulls `c` toward `s` without forcing it. At high λ this recovers
+the sharp version; at low λ the continuous state is free to drift.
+Annealing λ is another homotopy knob.
+
+**Kaczmarz inner iterations.** Before each two-plane update, run a few
+Kaczmarz projections to bring `c` closer to the feasible subspace.
+Cheap (O(m) per iteration) and keeps the inner problem better
+conditioned.
+
 ---
 
 ## 5. Recommended pipeline (best current thinking)
@@ -340,6 +443,11 @@ Adding the top two items would give us enough data to make the "easy
 vs moderate vs glassy" call on our instance distribution at moderate
 N, which in turn tells us whether to invest in the geometric-hybrid
 design or commit to BP as the engine.
+
+Orthogonal enhancements from §4.6 — warm-starting, homotopy, tabu,
+SA acceptance, spectral init, decimation — are each small additions
+but most only pay off after the basic variants are in place to
+compare against.
 
 ---
 
