@@ -18,6 +18,11 @@ point-level invariants. Under those assumptions it solves the problem
 without a glassy wall. The viability of the assumptions is the key open
 question.
 
+**If you're picking this up to continue working on it, jump to §9.**
+That holds the current candidate algorithm, its correctness analysis,
+the open construction subgoal, and the suggested next steps. §1–§8 are
+the idea catalog and context.
+
 ---
 
 ## 1. Problem recap

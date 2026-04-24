@@ -1,5 +1,26 @@
 # Hypercube Vertex Finder: Ellipsoid Fitness Algorithm
 
+> **HISTORICAL DOCUMENT.** This is the original guess-and-flip + analytic-
+> center-fitness design. Its core claim (C3: "correct guess `s = x*` has
+> highest continuous fitness") was **empirically falsified** in
+> `findings.md` with concrete N = 6, 8, 10 counterexamples.
+>
+> Related claims that also didn't hold up under verification:
+> - The "x* on ellipsoid surface" invariant was falsified for the
+>   standard MVCE update in `analyze_v3.py`.
+> - The "no local maxima" argument (C4) was aspirational; it fails
+>   empirically because C3 fails.
+>
+> **For the current working design, see `design-journal.md` §9.** The
+> geometric intuition about operations preserving surface membership
+> of x* is retained there as an explicit assumption (I1–I3), with the
+> construction of such operations flagged as the open subgoal.
+>
+> This file is kept as reference for the exploration history and for
+> the individual observations (information-theoretic constraints,
+> two-plane amplification, etc.) that remain valid even though the
+> headline algorithm does not.
+
 ## Problem
 
 Given N variables, each in {-1, 1}, and m ≈ N/3 sparse hyperplane constraints
