@@ -12,6 +12,12 @@ geometric continuous moves plus discrete escape heuristics to find the unique
 `x* ∈ {−1,+1}^N` satisfying a sparse `Ax = b` system. This journal captures
 that cluster.
 
+A **dual-ellipsoid surface-preservation design** (§9) is being kept alive
+under explicit assumptions about the existence of operations that maintain
+point-level invariants. Under those assumptions it solves the problem
+without a glassy wall. The viability of the assumptions is the key open
+question.
+
 ---
 
 ## 1. Problem recap
@@ -463,6 +469,160 @@ compare against.
   re-derived. Primary sources: Gamarnik's 2014-2020 papers on OGP,
   Mezard-Parisi-Zecchina on SP, Achlioptas-Ricci-Tersenghi on
   clustering transitions.
+
+---
+
+## 9. Dual-ellipsoid surface-preserving design (under explicit assumption)
+
+This is a candidate algorithm whose correctness depends on whether a
+specific family of ellipsoid-shaping operations can be constructed.
+Recording it here in case the operations turn out to exist; the
+construction question is the open subgoal.
+
+### 9.1 The assumed invariants (I1–I3)
+
+We assume operations on a pair of ellipsoids `(c₁, P₁)` and `(c₂, P₂)`,
+both sharing center `c` (or each having its own center; see below),
+exist with the following properties:
+
+- **(I1)** After any operation, x* satisfies `(x* − c₁)ᵀ P₁⁻¹ (x* − c₁) = 1`
+  — i.e., x* is on the *Euclidean surface* (point-level) of ellipsoid 1.
+- **(I2)** After any operation, −x* satisfies `(−x* − c₂)ᵀ P₂⁻¹ (−x* − c₂) = 1`
+  — i.e., −x* is on the surface of ellipsoid 2.
+- **(I3)** Operations can reshape each ellipsoid's `P` toward or away from
+  isotropy (sphericity), continuously.
+
+I1 and I2 are *point-level* invariants — stronger than the
+hyperplane-level invariants the standard ellipsoid-method update
+preserves. Critically, the operations are computable from `(A, b, c, P)`
+alone (without reading off x*).
+
+### 9.2 The four-function fitness
+
+Given a candidate `c`, define:
+
+- **f₁(c)** = `r₁(c) + r₂(c)` where `rᵢ` is the *radius* of sphere i.
+  Under sphericity, `r₁ = ‖c − x*‖` and `r₂ = ‖c + x*‖` follow from
+  I1 + I2 + I3. **Minimize.**
+- **f₂(c)** = sum over both ellipsoids of axis-length variance, where
+  axis lengths are the eigenvalues of the shape matrices. **Minimize**
+  to drive both toward sphericity.
+- **f₃(c), f₄(c)** = total radius / volume of each ellipsoid individually.
+  Subsumed by f₁ when sphericity holds; can be weighted independently
+  during annealing.
+
+The optimization minimizes a weighted sum `w₁f₁ + w₂f₂ + w₃f₃ + w₄f₄`
+with weights varied to anneal between sphericity-emphasized and
+radius-sum-emphasized regimes.
+
+### 9.3 Correctness analysis under I1–I3
+
+Step 1: when f₂ → 0, both ellipsoids are spheres. By I1 and I2, sphere 1
+has x* on surface (so its radius is exactly `‖c − x*‖`) and sphere 2 has
+−x* on surface (radius = `‖c + x*‖`).
+
+Step 2: minimizing f₁ = `‖c − x*‖ + ‖c + x*‖` subject to triangle
+inequality:
+
+```
+‖c − x*‖ + ‖c + x*‖ ≥ ‖x* − (−x*)‖ = 2‖x*‖ = 2√N
+```
+
+with **equality iff c lies on the line segment between x* and −x\***.
+
+Step 3: any c on this segment satisfies `c = t · x*` for some t ∈ [−1, 1].
+For any t ≠ 0, sign extraction `s = sign(c)` gives `±x*`. A single
+constraint check disambiguates the global sign.
+
+**Therefore, under I1–I3, the algorithm provably converges to x* with no
+local-optimum trap and no glassy wall.** The only minimizer of the joint
+fitness is the segment, and any point on the segment uniquely determines
+x* up to a global sign flip.
+
+### 9.4 Why this would dodge the glassy wall
+
+The OGP / glassy-wall arguments apply to algorithms whose moves are
+local in a discrete neighborhood (Hamming balls) or in a continuous
+neighborhood that depends only on `Ac` (constraint-residual locality).
+Under I1–I3, the algorithm's "moves" are operations on ellipsoid shapes
+that *implicitly use the position of x* via the invariant equations*.
+Each operation's update of `(c, P)` is constrained to keep
+`(x* − c)ᵀ P⁻¹ (x* − c) = 1` exactly true, which is a constraint on the
+operation itself, not on the search neighborhood.
+
+This injects information about x* into every step that bounded-local
+algorithms don't have. It's a way of making each step "non-local"
+without invoking SDP-level computation. Whether this is achievable
+without secretly re-encoding the original problem is the central open
+question.
+
+### 9.5 The open construction question
+
+**Can operations satisfying I1–I3, computable from (A, b, c, P) alone,
+actually be constructed?**
+
+Status: unresolved. What we know:
+
+- The standard ellipsoid-method MVCE update **does NOT preserve I1**.
+  Verified empirically by `analyze_v3.py` on N=3: after one cut, x*
+  ended up *outside* the new ellipsoid (cost 1.22 > 1).
+- The original `ellipsoid-approach.md` claimed I1 in the abstract, but
+  the empirical falsification in `analyze_v3.py` is what triggered the
+  pivot in commit `bea6d45` away from the shrink-ellipsoid framing.
+- "Pencil of ellipsoids" constructions (preserving E ∩ H_k for a chosen
+  hyperplane H_k) DO preserve x* on surface for the constraint they're
+  applied to, since x* ∈ E ∩ H_k. So *single-constraint* operations
+  preserving I1 are clearly possible.
+- The harder question is whether multi-step operations (using all m
+  constraints, plus the box, plus a sphericity drive) can *jointly*
+  preserve I1–I3. The "pencil" gives 1 free parameter per constraint;
+  full sphericity is N(N+1)/2 − 1 constraints on the shape matrix.
+  With m = N/3 free parameters from constraints, full sphericity may
+  be impossible to enforce while preserving I1; only approximate.
+
+### 9.6 Implementation tasks if we resurrect this
+
+If this design is to be tested seriously, the work breakdown is:
+
+1. **Construct candidate operations.** Start with the pencil-preserving
+   move per single constraint H_k. Define a sphericity-drive step that
+   modifies `P` toward `λI` while respecting I1 (may require accepting
+   approximate I1 if exact preservation conflicts with sphericity).
+   Verify on N=3, 4 that I1 holds *exactly* under the constructed
+   operations. Same for I2.
+
+2. **Implement the 4-function optimization.** Compute the weighted
+   fitness; do gradient descent or alternating minimization; track
+   convergence to the segment.
+
+3. **Test on small N.** Use the existing instance generator. Check
+   that convergence to a `c` with `sign(c) = x*` happens reliably. If
+   it does, scale up.
+
+4. **Stress-test the assumption.** If I1–I3 turn out to require
+   approximate enforcement, characterize how the "approximate segment"
+   the algorithm reaches relates to the true segment. If close enough
+   that sign-extraction is robust, the algorithm still works.
+
+5. **If I1–I3 cannot be enforced even approximately**, document why
+   (likely an over-constraint argument like §9.5 suggests) and treat
+   this design as falsified, joining the abandoned shrink-ellipsoid
+   framing in the falsified column.
+
+### 9.7 Honest framing
+
+This design is currently **a conditional design**: it works *if* the
+operations exist. The conditional structure makes it different from
+the falsified guess-and-flip (which we tested empirically and disproved)
+and from BP (which we know works in known regimes). It's a candidate
+that needs the construction-of-operations work to be done before it
+can be evaluated empirically.
+
+If the construction is impossible, this design joins the falsified
+column. If it's possible, it's a strong candidate that may genuinely
+sidestep the glassy wall — because it would be using non-local
+information (point-level x* invariants) baked into the operations
+themselves.
 
 ---
 
