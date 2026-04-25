@@ -91,6 +91,72 @@ def op_hyperplane_pencil(c, P_inv, a, b, s):
     return c_new, P_inv_new
 
 
+def op_two_plane_pencil(c, P_inv, i, t):
+    """Apply pencil parameter t for the pair of planes x_i = +1 and x_i = -1.
+
+    Construction: add t * (x_i^2 - 1) to the quadratic form.
+
+      g_t(x) := (x - c)^T P_inv (x - c) + t * (x_i^2 - 1)
+      E_t   := { x : g_t(x) <= 1 }
+
+    For any x with x_i = +1 or x_i = -1, (x_i^2 - 1) = 0, so g_t(x) = f_0(x).
+    Thus E_t and E_0 share the same intersection with the union of planes
+    {x_i = +1} and {x_i = -1}. In particular, every ±1 vertex on the surface
+    of E_0 stays on the surface of E_t. So if x* is on E_0's surface AND
+    x*_i in {-1, +1}, then x* is on E_t's surface for every valid t.
+
+    Note: this works simultaneously for x* and -x* (both have x*_i^2 = 1),
+    so the same operation preserves both invariants — no "paired" form
+    needed for box constraints.
+
+    Algebra:
+      g_t(x) = x^T (P_inv + t e_i e_i^T) x - 2 c^T P_inv x
+                                         + (c^T P_inv c - t)
+             = (x - c')^T M (x - c') + (constant)
+      with M = P_inv + t e_i e_i^T and c' = M^{-1} P_inv c.
+
+      Standard form (x - c')^T P_inv_new (x - c') = 1 has
+      P_inv_new = M / R where
+        R = 1 - c^T P_inv c + t + c'^T M c'.
+
+    Inputs:
+        c      : (N,) center.
+        P_inv  : (N, N) shape inverse.
+        i      : integer index, 0 <= i < N.
+        t      : scalar pencil parameter. t = 0 is identity.
+                 Valid range: t > -P_inv[i, i].
+
+    Returns:
+        c_new, P_inv_new
+    """
+    N = len(c)
+    if not (0 <= i < N):
+        raise ValueError(f"index out of range: {i}")
+    pii = float(P_inv[i, i])
+    if t <= -pii + 1e-12:
+        raise ValueError(
+            f"Pencil parameter out of valid range: t={t} must be > -P_inv[{i},{i}]={-pii}"
+        )
+
+    # M = P_inv + t * e_i e_i^T
+    M = P_inv.copy()
+    M[i, i] = M[i, i] + t
+
+    # New center: M c' = P_inv c (linear term unchanged in g_t)
+    rhs = P_inv @ c
+    c_new = np.linalg.solve(M, rhs)
+
+    # R = 1 - c^T P_inv c + t + c'^T M c'
+    R = float(1.0 - c @ P_inv @ c + t + c_new @ M @ c_new)
+    if R <= 1e-12:
+        raise ValueError(
+            f"Degenerate ellipsoid: R = {R} <= 0. Pencil parameter too extreme."
+        )
+
+    P_inv_new = M / R
+    return c_new, P_inv_new
+
+
 def on_surface(x, c, P_inv, tol=1e-10):
     """Check whether x is on the ellipsoid surface (within tolerance)."""
     val = float((x - c) @ P_inv @ (x - c))
