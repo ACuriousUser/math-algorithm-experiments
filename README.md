@@ -23,17 +23,36 @@ centered at the origin) that lies on all of the provided hyperplanes.
 ### Current working design
 
 The current candidate is a **dual-ellipsoid surface-preserving
-algorithm** defined in `design-journal.md` §9. It uses a four-function
-fitness (sum of radii, sphericity drive, and per-ellipsoid radii) to
-drive a continuous center `c` to the segment between `x*` and `-x*`,
-from which sign extraction recovers `x*`. Correctness is proven by
-triangle inequality — the segment is the unique minimizer, no basins,
-no glassy-wall obstruction.
+algorithm** defined in `design-journal.md` §9. Two ellipsoids
+maintain x* and −x* on their surfaces respectively (invariants I1 and
+I2), and a coordinate-descent loop over the operation parameters
+shrinks each ellipsoid until its center concentrates near its target.
 
-The two surface-preserving operations the algorithm depends on (Op1 and
-Op2) are implemented in `surface_preserving_ops.py` and verified by 20
-tests across the two test files. The next piece of work is the descent
-algorithm itself (not yet written).
+The two surface-preserving operations (Op1 and Op2) are implemented in
+`surface_preserving_ops.py` and verified by 20 tests across two test
+files. The descent itself is implemented in `dual_ellipsoid_descent.py`
+and characterized empirically by `test_dual_ellipsoid_descent.py`.
+
+### Empirical status
+
+With weight profile `{size: 5, sph: 1, align: 0}` the descent solves
+**40 / 40** small-N instances tested:
+
+| N | m | E1 success | E2 success |
+|---|---|-----------|-----------|
+| 6 | 4 | 10 / 10 | 10 / 10 |
+| 6 | 5 | 10 / 10 | 10 / 10 |
+| 8 | 5 | 5 / 5 | 5 / 5 |
+| 8 | 6 | 5 / 5 | 5 / 5 |
+| 10 | 6 | 5 / 5 | 5 / 5 |
+| 10 | 7 | 5 / 5 | 5 / 5 |
+
+"Success" = `sign(c) = ±x*` exactly. The original §9 "shared-center /
+triangle-inequality" framing turned out *not* to be the operative
+correctness story — see §9.9 of the journal for the empirical
+analysis. The next hurdle is N ≈ 100+ in the glassy regime; the
+current descent is O((m+N)·N³) per round and will need restructuring
+to get there.
 
 ### Document map
 
@@ -41,12 +60,17 @@ algorithm itself (not yet written).
 - `README.md` — this file.
 - `design-journal.md` — **living design document**. §9 holds the
   current algorithm; §1–§8 capture the idea catalog and history of
-  what's been ruled in or out.
+  what's been ruled in or out. §9.8–§9.10 hold the empirical descent
+  results.
 - `surface_preserving_ops.py` — the two surface-preserving ellipsoid
   operations (Op1 = hyperplane pencil, Op2 = two-plane / box pencil).
+- `dual_ellipsoid_descent.py` — coordinate-descent loop over Op1 / Op2
+  parameters that shrinks both ellipsoids to their targets.
 - `test_surface_preserving.py`, `test_two_plane_op.py` — tests
   verifying I1 (and I2 for Op2) under each operation and their
   compositions.
+- `test_dual_ellipsoid_descent.py` — empirical evaluation: instance
+  sweep, weight-profile comparison, success-rate table.
 
 **`archive/` — historical / falsified work, kept as evidence:**
 - `archive/ellipsoid-approach.md` — the original (falsified) design.

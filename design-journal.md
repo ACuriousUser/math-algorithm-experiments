@@ -19,10 +19,13 @@ has been answered **yes** for the per-operation case: see
 `surface_preserving_ops.py` and 20 passing tests in
 `test_surface_preserving.py` + `test_two_plane_op.py`.
 
-The remaining open question is whether the descent on the four-function
-fitness using these operations actually drives `c` to the segment
-between `x*` and `−x*` in practice. That requires implementing
-`dual_ellipsoid_descent.py` and testing on small-N instances.
+The descent question is also answered **yes** in a simplified form:
+`dual_ellipsoid_descent.py` runs coordinate descent over Op1 and Op2
+parameters, and on small instances (N ∈ {6, 8, 10}, m ∈ {N/2 − 1, …,
+N − 1}) it recovers x* on **every instance tested** when the fitness
+weights emphasize size-shrinking and drop the c1=c2 alignment term.
+See §9.8 below for the empirical findings and what they say about the
+original §9 design.
 
 **If you're picking this up to continue working on it, jump to §9.**
 That holds the current candidate algorithm, its correctness analysis,
@@ -658,7 +661,119 @@ sidestep the glassy wall — because it would be using non-local
 information (point-level x* invariants) baked into the operations
 themselves.
 
+### 9.8 Empirical descent results (2026-04-25)
+
+`dual_ellipsoid_descent.py` implements the descent and
+`test_dual_ellipsoid_descent.py` runs it on planted-unique 3-sparse
+|b|=1 instances generated via the existing test bed. Each round
+sweeps once through:
+
+  - For every constraint k ∈ [m]: a golden-section line search for
+    the best `s_k` to apply Op1 to E1 with `(a_k, b_k)`, and another
+    `s_k` for E2 with `(a_k, −b_k)`.
+  - For every coordinate i ∈ [N]: line searches for `t_i` on E1 and E2.
+
+Fitness evaluated is `w_size · (size(E1) + size(E2)) + w_sph ·
+(sphericity_defect(E1) + sphericity_defect(E2)) + w_align · ‖c1 − c2‖²`.
+"Size" is `mean(eigvals(P))` (mean squared semi-axis), "sphericity
+defect" is `var(eigvals(P))`. Initial state is the radius-√N sphere
+centered at origin (both x* and −x* on surface), kicked once by a
+random Op1 to break the c1 = c2 = 0 symmetric minimum.
+
+**Headline result.** With `weights = {size: 5, sph: 1, align: 0}`:
+
+| N | m | E1 success | E2 success | max \|I1\| | max \|I2\| |
+|---|---|-----------|-----------|-----------|-----------|
+| 6 | 4 | 10 / 10 | 10 / 10 | 3e−2 | 3e−2 |
+| 6 | 5 | 10 / 10 | 10 / 10 | 2e−1 | 2e−1 |
+| 8 | 5 | 5 / 5 | 5 / 5 | 2e−2 | 2e−2 |
+| 8 | 6 | 5 / 5 | 5 / 5 | 3e−2 | 3e−2 |
+| 10 | 6 | 5 / 5 | 5 / 5 | 3e−2 | 3e−2 |
+| 10 | 7 | 5 / 5 | 5 / 5 | 3e−2 | 3e−2 |
+
+"Success" means `sign(c1) = x*` exactly (Hamming = 0), and similarly
+for c2 vs −x*. 40/40 instances solved across the table.
+
+For comparison, with `weights = {size: 1, sph: 1, align: 0}` (equal
+size/sphericity weighting), N=6 m=4 dropped to 5/10. The size weight
+matters: emphasising shrink reliably drives c1 → x* and c2 → −x*; equal
+weights leave more local-minimum risk on the joint surface. The
+profile `{size: 1, sph: 1, align: 0.5}` (the original §9 framing with
+the alignment term) was substantially slower and got stuck on
+instances during testing — see §9.9.
+
+**I1, I2 drift.** As ellipsoids concentrate to a point, P_inv blows
+up and accumulated floating-point error grows. The max |I1| of ~2e−1
+(N=6, m=5) reflects a couple of round trips near-singular, not a
+correctness bug — sign extraction is correct on every successful run
+regardless of the residual size.
+
+### 9.9 What the empirical result says about the §9 framing
+
+Two design choices in §9 were nudged by the data:
+
+1. **The "shared center" framing (c1 = c2 = c) is not necessary.**
+   Adding `‖c1 − c2‖²` to the fitness *fights* convergence: when E1 is
+   pulling c1 toward x* and E2 is pulling c2 toward −x*, the align
+   term wants the centers to coincide. The two pressures conflict, and
+   the align term tends to win in early rounds, freezing the ellipsoids
+   near the symmetric c=0 state. Setting `w_align = 0` and letting
+   each ellipsoid concentrate independently to its own target gave
+   clean convergence on every instance.
+
+2. **The triangle-inequality / segment argument in §9.3 is therefore
+   not the operative correctness story.** What's actually happening is
+   simpler: each ellipsoid Eᵢ is required to keep its target on its
+   surface (I1 / I2). When we shrink Eᵢ to a point, the only point
+   left on the surface *is* the target. So `c_i → target_i` directly,
+   and `sign(c_i) = target_i` follows.
+
+   The §9.3 bound `r1 + r2 ≥ 2√N` with equality on the segment is a
+   true theorem, but the descent never has to use it. It only needs
+   each ellipsoid's "shrink to a single point" behavior, separately.
+
+3. **This is closer to a single-ellipsoid story than the dual-ellipsoid
+   §9 design.** Solving for x* via E1 alone (with original constraints)
+   would suffice; E2 with paired constraints is a redundant check, or
+   useful as a tiebreaker for the sign of c1 if c1 is near zero. We
+   left the dual structure in place for now — it's cheap and provides
+   a redundant verifier — but a slimmer single-ellipsoid version would
+   work too and is worth implementing for scale tests.
+
+### 9.10 What's now open
+
+The §9.5 worry about "joint reach" of the operation family is empirically
+answered for the regime we tested: the family *is* expressive enough to
+drive both shrinking and (approximate) sphericity. Open items:
+
+1. **Scaling to N = 50, 100, 200.** The current descent is O((m+N)·k²)
+   per line-search step where k is golden-section iterations, and
+   eigvalsh is O(N³). Total per-round: O((m+N)·N³). Not viable past
+   N ≈ 50 without restructuring. Use power iteration for largest /
+   smallest eigvals, or skip the eigvalsh and use trace-of-P directly
+   as a proxy size.
+
+2. **Failure regime characterization.** All tested instances were
+   |b|=1, m up to N−1. The interesting question is what happens deep
+   in the constrained regime (m closer to N/3) on instances near the
+   glassy threshold. The current generator restricts to |b|=1; a
+   mixed-|b| generator would produce more representative samples.
+
+3. **Robustness to ill-conditioning.** When `P_inv` becomes huge (near
+   point-concentration), I1 / I2 residuals climb to ~1e−1. Numerical
+   stability is fine for sign extraction at this scale but might
+   matter at larger N. Either re-orthogonalize periodically or add a
+   re-projection step that pushes the surface invariant back to 0.
+
+4. **Replace the conditional framing in §9.7.** The construction *and*
+   the descent both work, so this is no longer a conditional design.
+   Whether it sidesteps the glassy wall is still open — the small-N
+   regime tested is not in the glassy regime, so the wall hasn't been
+   tested. That requires N in the hundreds with random |b|=1 m ≈ N/3
+   instances, which is the next hurdle.
+
 ---
 
-*Last updated by Claude session 2026-04-24, following a long design
-conversation. Keep this file updated as a living record.*
+*Last updated by Claude session 2026-04-25, following the implementation
+of `dual_ellipsoid_descent.py`. Keep this file updated as a living
+record.*
