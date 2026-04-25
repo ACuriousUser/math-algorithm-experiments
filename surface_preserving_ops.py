@@ -1,251 +1,398 @@
 """
-Surface-preserving ellipsoid operations.
+Surface-preserving ellipsoid operations -- axis-aligned form.
 
-Two operations on the joint state (c, P_inv) of an ellipsoid
-E = { x : (x - c)^T P_inv (x - c) <= 1 }:
+The dual-ellipsoid descent maintains two axis-aligned ellipsoids E_1
+and E_2 sharing a single center c:
 
-  Op1: op_hyperplane_pencil(c, P_inv, a, b, s)
-       Updates the ellipsoid using a hyperplane H: a^T x = b.
+    E_i = { x : sum_j A_i[j] * (x_j - c[j])^2 = R_i_sq }
 
-  Op2: op_two_plane_pencil(c, P_inv, i, t)
-       Updates the ellipsoid using the pair of planes x_i = +1 and x_i = -1.
+E_1 carries x* on its surface; E_2 carries -x*. The operations below
+preserve the relevant invariants (I1: x* on E_1, I2: -x* on E_2) and
+preserve shared c across both ellipsoids.
 
-Both operations preserve the surface-membership invariant:
-  if x* is on the surface of E AND x* satisfies the constraint, then x*
-  is on the surface of the new ellipsoid.
+Axis-aligned representation: each ellipsoid is described by
+    c       : (N,)   shared center
+    A_i     : (N,)   per-axis stiffness, A_i[j] > 0
+    R_i_sq  : scalar > 0
+The shape inverse is diag(A_i / R_i_sq); the i-th axis half-length is
+sqrt(R_i_sq / A_i[i]).
 
-For Op1: x* must satisfy a^T x* = b. Using -b instead preserves -x* (the
-"paired" form). For Op2: x* must satisfy x_i^2 = 1, which is true for any
-±1 vertex. So Op2 preserves x* and -x* simultaneously with a single call.
+Two operations:
 
-The operations are computable from (c, P_inv, a, b, s) or
-(c, P_inv, i, t) alone — they never reference x*'s coordinates.
+  Op1 (hyperplane H_k = {x : x_k = b}):
+      Adds s * (x_k - b)^2 to the form. Vanishes on H_k, so any point
+      satisfying x_k = b that was on E_0's surface stays on the new
+      surface. For x* (a +/-1 vertex), this means b must be in {-1, +1}
+      and must match x*'s sign at coordinate k. Op1 commits to a sign
+      hypothesis for x*_k -- if the hypothesis is wrong, I1 is broken.
+      Paired version: E_1 uses x_k = b, E_2 uses x_k = -b (since
+      -x*_k = -x*_k).
 
-==============================================================================
-PARAMETERIZATION (how the parameter controls the "push")
-==============================================================================
+  Op2 (two parallel planes x_k = +1, x_k = -1):
+      Adds M * (x_k^2 - 1) to the form. Vanishes on x_k = +/-1, so any
+      vertex with x*_k^2 = 1 stays on the new surface. Preserves both
+      x* and -x* simultaneously without committing to a sign.
+      Important: Op2 cannot move c[k] when c[k] = 0 (the formula
+      newC[k] = A[k]*c[k]/(A[k]+M) returns 0 for any M when c[k] = 0).
+      Use Op1 to break the c[k] = 0 symmetry first.
 
-Op1 -- parameter s
-------------------
-  Identity at s = 0. Valid range: s in (-1/(a^T P a), +infinity).
+Why axis-aligned and not general:
+  In axis-aligned form, the i-th column of the shape matrix P is
+  parallel to e_i (since P is diagonal). So the natural pencil motion
+  -- which moves c along the i-th column of P -- is automatically
+  along e_i. That means a single shared parameter (delta) on both
+  ellipsoids in the paired version produces a single shared new
+  center, so shared c is automatic. In general (non-axis-aligned)
+  ellipsoids, P_:i has off-diagonal components and the same parameter
+  on each side moves c in different directions, breaking shared c.
 
-  The new center moves along direction P*a (the hyperplane normal in
-  the ellipsoid metric):
-
-        c' - c = [ s / (1 + s * a^T P a) ] * (b - a^T c) * P a
-
-  The factor (b - a^T c) is the signed distance from c to H (scaled by
-  ||a||^2), so the direction of motion automatically aligns with which
-  side of H the center is on.
-
-  Reading:
-    s > 0  -> push c toward and past the hyperplane (deeper into the
-              half-space the plane fences off).
-    s < 0  -> push c away from the hyperplane (deeper into the side
-              already chosen).
-    |s|    -> magnitude of push. Saturates at 1/(a^T P a) for s -> +inf;
-              ellipsoid degenerates as s -> -1/(a^T P a) from above.
-
-  Practical step sizing:
-    The natural scale is 1/(a^T P a). Bounding |s * a^T P a| < 0.5
-    keeps the operation well within its valid range and avoids
-    numerical degeneracy. The composition tests use this bound.
-
-Op2 -- parameter t
-------------------
-  Identity at t = 0. Valid range: t > -P_inv[i, i].
-
-  The new center moves along the i-th column of P:
-
-        c' - c = [ -t * c_i / (1 + t * P_inv[i,i]) ] * P[:, i]
-
-  Looking at just the i-th coordinate:
-
-        c'_i - c_i = -t * c_i * P_inv[i,i] / (1 + t * P_inv[i,i])
-
-  Reading:
-    t > 0  -> pull c_i toward zero (centering, away from both walls
-              x_i = +1 and x_i = -1).
-    t < 0  -> push c_i away from zero (spreading, toward whichever wall
-              c_i is already closer to).
-    |t|    -> magnitude of push. Saturates at 1/P_inv[i, i] for
-              t -> +inf; ellipsoid degenerates as t -> -P_inv[i, i]
-              from above.
-
-  Practical step sizing:
-    A safe range is |t * P_inv[i,i]| < 0.5. The composition tests use
-    t in (-0.3 * P_inv[i,i], +0.5 * P_inv[i,i]).
-
-Note on units
--------------
-Neither parameter is arc-length: the same numerical s applied across
-two hyperplanes (or t applied across two coordinates) will produce
-different actual displacements of c, because the conversion involves
-a^T P a or P_inv[i, i] which depend on the current shape P. For
-gradient-based descent on a fitness function, this is fine -- the
-optimizer's rescaling absorbs the dimensional factors.
-
-==============================================================================
-CONSTRUCTION DETAILS (Op1)
-==============================================================================
-
-Pencil of ellipsoids preserving E ∩ H.
-
-  Given E_0 = { x : (x - c)^T P^{-1} (x - c) <= 1 }
-  and hyperplane H = { x : a^T x = b }
-  the pencil of ellipsoids parameterized by s is:
-
-    g_s(x) := (x - c)^T P^{-1} (x - c) + s * (a^T x - b)^2
-
-    E_s := { x : g_s(x) <= 1 }
-
-For x in H, (a^T x - b) = 0, so g_s(x) = f_0(x). Hence E_s and E_0 share
-the same intersection with H. In particular, every x in E_0 ∩ H is on the
-surface of E_s for every s. So if x* is on the surface of E_0 AND x* is
-on H, then x* is on the surface of E_s for every s. (I1 preserved.)
-
-Algebraic conversion to standard form:
-
-  g_s(x) = x^T M x - 2 (M c')^T x + (c'^T M c' - 1) + r^2_offset
-         = (x - c')^T M (x - c') + (constant)
-
-  where:
-    M(s)  = P^{-1} + s * a a^T               (shape inverse)
-    c'(s) = M(s)^{-1} (P^{-1} c + s b a)     (new center)
-
-  The standard ellipsoid form (x - c')^T P'^{-1} (x - c') <= 1 has:
-    P'^{-1}(s) = M(s) / R(s)
-  where R(s) is chosen so that x in E_0 ∩ H satisfies the equation with
-  RHS = 1.
-
-  R(s) computed by closed form:
-    Let v = P^{-1} c + s b a, then
-    R(s) = c'^T M c' - c^T P^{-1} c - s b^2 + 1
-         = v^T M^{-1} v - c^T P^{-1} c - s b^2 + 1
-
-  Validity: requires M(s) PSD, i.e., 1 + s * (a^T P a) > 0 in our case.
-  (Sherman-Morrison condition.)
+  The cost of axis-alignment: the pencil hyperplane in Op1 must be
+  axis-aligned (a = e_k). Sparse but multi-coordinate constraint
+  hyperplanes from the original Ax=b system (a row of A with several
+  +/-1 entries) cannot be encoded as a single Op1 step. Those
+  constraints have to enter the descent through the fitness function
+  or through a different operation, not through the per-step
+  ellipsoid update.
 """
+
+from dataclasses import dataclass
 
 import numpy as np
 
 
-def op_hyperplane_pencil(c, P_inv, a, b, s):
-    """Apply pencil parameter s for hyperplane H: a^T x = b.
+@dataclass
+class DualEllipsoidState:
+    """Dual-ellipsoid state: two axis-aligned ellipsoids sharing one center.
 
-    Inputs:
-        c       : (N,) center of current ellipsoid.
-        P_inv   : (N, N) shape inverse, so ellipsoid is
-                  { x : (x - c)^T P_inv (x - c) <= 1 }.
-        a       : (N,) hyperplane normal.
-        b       : scalar, hyperplane offset.
-        s       : scalar pencil parameter. s = 0 is the identity.
-                  Valid range: 1 + s * (a^T P a) > 0.
+        E_1 = { x : sum_j A1[j] (x_j - c[j])^2 = R1_sq }
+        E_2 = { x : sum_j A2[j] (x_j - c[j])^2 = R2_sq }
 
-    Returns:
-        c_new   : (N,) new center.
-        P_inv_new : (N, N) new shape inverse.
-
-    Property (I1): for every x with (x-c)^T P_inv (x-c) = 1 and a^T x = b,
-    we have (x - c_new)^T P_inv_new (x - c_new) = 1.
+    E_1's surface contains x*; E_2's surface contains -x*. The shared
+    center c is the descent's primary degree of freedom -- the goal of
+    the algorithm is to drive c to the segment between x* and -x*, from
+    which sign extraction recovers x*.
     """
-    P = np.linalg.inv(P_inv)
-    aPa = float(a @ P @ a)
-    if 1.0 + s * aPa <= 1e-12:
-        raise ValueError(
-            f"Pencil parameter out of valid range: 1 + s*aPa = {1.0 + s*aPa}"
+
+    c: np.ndarray
+    A1: np.ndarray
+    R1_sq: float
+    A2: np.ndarray
+    R2_sq: float
+
+    @classmethod
+    def initial_sphere(cls, N):
+        """Initial state: both ellipsoids = sphere of radius sqrt(N) at origin.
+
+        Every +/-1 vertex lies on this sphere's surface, so I1 (x* on E_1)
+        and I2 (-x* on E_2) hold automatically regardless of which vertex
+        is x*.
+        """
+        return cls(
+            c=np.zeros(N),
+            A1=np.ones(N),
+            R1_sq=float(N),
+            A2=np.ones(N),
+            R2_sq=float(N),
         )
 
-    # M = P_inv + s * a a^T
-    M = P_inv + s * np.outer(a, a)
+    @property
+    def N(self):
+        return len(self.c)
 
-    # v = P_inv @ c + s * b * a, then c_new = M^{-1} v
-    v = P_inv @ c + s * b * a
-    c_new = np.linalg.solve(M, v)
+    def x_on_E1(self, x, tol=1e-10):
+        """Check whether x is on E_1's surface."""
+        return on_surface(x, self.c, self.A1, self.R1_sq, tol)
 
-    # R = (c_new^T M c_new) - (c^T P_inv c) - s b^2 + 1
-    # This is the "scale" so that the unit-level set of g_s in standard form
-    # becomes the unit ellipsoid.
-    R = float(c_new @ M @ c_new - c @ P_inv @ c - s * b * b + 1.0)
-    if R <= 1e-12:
-        raise ValueError(
-            f"Degenerate ellipsoid: R = {R} <= 0. Pencil parameter too extreme."
-        )
+    def x_on_E2(self, x, tol=1e-10):
+        """Check whether x is on E_2's surface."""
+        return on_surface(x, self.c, self.A2, self.R2_sq, tol)
 
-    # P_inv_new = M / R (so that level set of (x-c_new)^T P_inv_new (x-c_new) = 1
-    # corresponds to g_s(x) = 1)
-    P_inv_new = M / R
+    def valid_range_hyperplane(self, k, b):
+        """(delta_lo, delta_hi) for paired Op1 on coordinate k with offset b."""
+        return valid_delta_range_op_hyperplane(self.c, k, b)
 
-    return c_new, P_inv_new
+    def valid_range_two_plane(self, k):
+        """(delta_lo, delta_hi) for paired Op2 on coordinate k."""
+        return valid_delta_range_op_two_plane(self.c, k)
 
 
-def op_two_plane_pencil(c, P_inv, i, t):
-    """Apply pencil parameter t for the pair of planes x_i = +1 and x_i = -1.
+def on_surface(x, c, A, R_sq, tol=1e-10):
+    """Check whether x lies on the surface of the axis-aligned ellipsoid.
 
-    Construction: add t * (x_i^2 - 1) to the quadratic form.
+    Surface: sum_j A[j] (x_j - c[j])^2 = R_sq.
+    """
+    val = float(np.sum(A * (x - c) ** 2))
+    return abs(val - R_sq) < tol, val
 
-      g_t(x) := (x - c)^T P_inv (x - c) + t * (x_i^2 - 1)
-      E_t   := { x : g_t(x) <= 1 }
 
-    For any x with x_i = +1 or x_i = -1, (x_i^2 - 1) = 0, so g_t(x) = f_0(x).
-    Thus E_t and E_0 share the same intersection with the union of planes
-    {x_i = +1} and {x_i = -1}. In particular, every ±1 vertex on the surface
-    of E_0 stays on the surface of E_t. So if x* is on E_0's surface AND
-    x*_i in {-1, +1}, then x* is on E_t's surface for every valid t.
+# ---------------------------------------------------------------------------
+# Op1: axis-aligned hyperplane H_k = {x : x_k = b}
+# ---------------------------------------------------------------------------
+#
+# Pencil: q(x) = f_0(x) + s * (x_k - b)^2.
+# The added term vanishes on H_k, so any x in E_0 ∩ H_k stays at level R_sq.
+#
+# Re-completing the square in x_k:
+#   newA[k]   = A[k] + s
+#   newC[k]   = (A[k] * c[k] + s * b) / (A[k] + s)
+#   newR_sq   = R_sq - s * A[k] * (c[k] - b)^2 / (A[k] + s)
+#
+# The other coordinates' A and c entries are unchanged, so the
+# representation stays axis-aligned.
+#
+# Inverting newC[k] = c[k] + delta to solve for s:
+#   s = A[k] * delta / (b - c[k] - delta)
+#
+# Validity:
+#   - denominator b - c[k] - delta != 0 (else delta would push the new
+#     center exactly onto the hyperplane, and s diverges),
+#   - newA[k] > 0,
+#   - newR_sq > 0.
 
-    Note: this works simultaneously for x* and -x* (both have x*_i^2 = 1),
-    so the same operation preserves both invariants — no "paired" form
-    needed for box constraints.
 
-    Algebra:
-      g_t(x) = x^T (P_inv + t e_i e_i^T) x - 2 c^T P_inv x
-                                         + (c^T P_inv c - t)
-             = (x - c')^T M (x - c') + (constant)
-      with M = P_inv + t e_i e_i^T and c' = M^{-1} P_inv c.
-
-      Standard form (x - c')^T P_inv_new (x - c') = 1 has
-      P_inv_new = M / R where
-        R = 1 - c^T P_inv c + t + c'^T M c'.
+def op_hyperplane(c, A, R_sq, k, b, delta):
+    """Apply Op1 (axis-aligned hyperplane x_k = b) to translate c[k] by delta.
 
     Inputs:
         c      : (N,) center.
-        P_inv  : (N, N) shape inverse.
-        i      : integer index, 0 <= i < N.
-        t      : scalar pencil parameter. t = 0 is identity.
-                 Valid range: t > -P_inv[i, i].
+        A      : (N,) per-axis stiffness.
+        R_sq   : scalar.
+        k      : coordinate index.
+        b      : hyperplane offset (must equal x*_k for I1 to be preserved;
+                 typically +1 or -1 since x* is a +/-1 vertex).
+        delta  : signed motion of c[k]. delta = 0 is identity.
 
     Returns:
-        c_new, P_inv_new
+        c_new, A_new, R_sq_new.
     """
-    N = len(c)
-    if not (0 <= i < N):
-        raise ValueError(f"index out of range: {i}")
-    pii = float(P_inv[i, i])
-    if t <= -pii + 1e-12:
+    bc = b - c[k]
+    denom = bc - delta
+    if abs(denom) < 1e-14:
         raise ValueError(
-            f"Pencil parameter out of valid range: t={t} must be > -P_inv[{i},{i}]={-pii}"
+            f"Degenerate: b - c[k] - delta = {denom} ~ 0. "
+            f"delta would push c[k] onto the hyperplane."
         )
 
-    # M = P_inv + t * e_i e_i^T
-    M = P_inv.copy()
-    M[i, i] = M[i, i] + t
+    s = A[k] * delta / denom
 
-    # New center: M c' = P_inv c (linear term unchanged in g_t)
-    rhs = P_inv @ c
-    c_new = np.linalg.solve(M, rhs)
-
-    # R = 1 - c^T P_inv c + t + c'^T M c'
-    R = float(1.0 - c @ P_inv @ c + t + c_new @ M @ c_new)
-    if R <= 1e-12:
+    new_A_k = A[k] + s
+    if new_A_k <= 1e-14:
         raise ValueError(
-            f"Degenerate ellipsoid: R = {R} <= 0. Pencil parameter too extreme."
+            f"Degenerate: A[k] + s = {new_A_k} <= 0. "
+            f"delta out of valid range."
         )
 
-    P_inv_new = M / R
-    return c_new, P_inv_new
+    new_R_sq = R_sq - s * A[k] * bc * bc / new_A_k
+    if new_R_sq <= 1e-14:
+        raise ValueError(
+            f"Degenerate: R_sq_new = {new_R_sq} <= 0."
+        )
+
+    c_new = c.copy()
+    c_new[k] = c[k] + delta
+    A_new = A.copy()
+    A_new[k] = new_A_k
+    return c_new, A_new, new_R_sq
 
 
-def on_surface(x, c, P_inv, tol=1e-10):
-    """Check whether x is on the ellipsoid surface (within tolerance)."""
-    val = float((x - c) @ P_inv @ (x - c))
-    return abs(val - 1.0) < tol, val
+def paired_op_hyperplane(state, k, b, delta):
+    """Paired Op1: hyperplane x_k = b on E_1, x_k = -b on E_2; shared c update.
+
+    Both sides translate c[k] by delta; each side computes its own s
+    internally to achieve that motion under its own (A_i, R_i_sq).
+
+    Side 1 preserves x* (when x*_k = b). Side 2 preserves -x* (when
+    -x*_k = -b, i.e., x*_k = b, same condition). So this paired op
+    commits to the hypothesis x*_k = b. If x*_k turns out to be -b,
+    both invariants break.
+
+    Inputs:
+        state : DualEllipsoidState.
+        k     : coordinate index.
+        b     : hyperplane offset for E_1 (E_2 uses -b). Typically +/-1.
+        delta : signed motion of c[k]; must lie in
+                state.valid_range_hyperplane(k, b).
+
+    Returns:
+        DualEllipsoidState (new instance).
+    """
+    c1, A1_new, R1_sq_new = op_hyperplane(
+        state.c, state.A1, state.R1_sq, k, b, delta
+    )
+    c2, A2_new, R2_sq_new = op_hyperplane(
+        state.c, state.A2, state.R2_sq, k, -b, delta
+    )
+    assert np.allclose(c1, c2, atol=1e-12), (
+        "paired_op_hyperplane: shared c violated"
+    )
+    return DualEllipsoidState(c1, A1_new, R1_sq_new, A2_new, R2_sq_new)
+
+
+# ---------------------------------------------------------------------------
+# Op2: two parallel planes x_k = +1, x_k = -1 (the box constraint x_k^2 = 1)
+# ---------------------------------------------------------------------------
+#
+# Pencil: q(x) = f_0(x) + M * (x_k^2 - 1).
+# Vanishes on x_k = +1 AND x_k = -1, so any vertex with x_k^2 = 1
+# (in particular both x* and -x*) stays at level R_sq.
+#
+# Re-completing the square:
+#   newA[k]   = A[k] + M
+#   newC[k]   = A[k] * c[k] / (A[k] + M)
+#   newR_sq   = R_sq + M - A[k] * c[k]^2 + A[k]^2 * c[k]^2 / (A[k] + M)
+#
+# Inverting newC[k] = c[k] + delta to solve for M:
+#   M = -A[k] * delta / (c[k] + delta)
+#
+# Validity:
+#   - c[k] + delta != 0 (else M diverges),
+#   - if c[k] = 0 then delta must be 0 (formula gives newC[k] = 0 always),
+#   - newA[k] > 0,
+#   - newR_sq > 0.
+
+
+def op_two_plane(c, A, R_sq, k, delta):
+    """Apply Op2 (two-plane x_k^2 = 1 pencil) to translate c[k] by delta.
+
+    Inputs:
+        c      : (N,) center.
+        A      : (N,) per-axis stiffness.
+        R_sq   : scalar.
+        k      : coordinate index.
+        delta  : signed motion of c[k]. Must be 0 if c[k] = 0.
+
+    Returns:
+        c_new, A_new, R_sq_new.
+    """
+    if abs(delta) < 1e-14:
+        return c.copy(), A.copy(), R_sq
+
+    if abs(c[k]) < 1e-14:
+        raise ValueError(
+            f"Op2: c[k] = 0 and delta != 0; Op2 cannot move c[k] from "
+            f"the origin. Use Op1 to break the symmetry first."
+        )
+
+    new_c_k = c[k] + delta
+    if abs(new_c_k) < 1e-14:
+        raise ValueError(
+            f"Op2: new c[k] = {new_c_k} ~ 0 forces M -> infinity."
+        )
+
+    M = -A[k] * delta / new_c_k
+
+    new_A_k = A[k] + M
+    if new_A_k <= 1e-14:
+        raise ValueError(
+            f"Degenerate: A[k] + M = {new_A_k} <= 0. delta out of range."
+        )
+
+    new_R_sq = (
+        R_sq
+        + M
+        - A[k] * c[k] * c[k]
+        + A[k] * A[k] * c[k] * c[k] / new_A_k
+    )
+    if new_R_sq <= 1e-14:
+        raise ValueError(
+            f"Degenerate: R_sq_new = {new_R_sq} <= 0."
+        )
+
+    c_new = c.copy()
+    c_new[k] = new_c_k
+    A_new = A.copy()
+    A_new[k] = new_A_k
+    return c_new, A_new, new_R_sq
+
+
+def paired_op_two_plane(state, k, delta):
+    """Paired Op2: apply two-plane pencil to BOTH ellipsoids with shared delta.
+
+    Both sides preserve their respective invariants (the pencil
+    vanishes on x_k = +/-1, so it preserves any +/-1 vertex on the
+    surface, including both x* and -x*). Each side computes its own
+    M_i internally to achieve the shared delta motion of c[k].
+
+    Inputs:
+        state : DualEllipsoidState.
+        k     : coordinate index.
+        delta : signed motion of c[k]; must lie in
+                state.valid_range_two_plane(k). delta = 0 if c[k] = 0.
+
+    Returns:
+        DualEllipsoidState (new instance).
+    """
+    c1, A1_new, R1_sq_new = op_two_plane(state.c, state.A1, state.R1_sq, k, delta)
+    c2, A2_new, R2_sq_new = op_two_plane(state.c, state.A2, state.R2_sq, k, delta)
+    assert np.allclose(c1, c2, atol=1e-12), (
+        "paired_op_two_plane: shared c violated"
+    )
+    return DualEllipsoidState(c1, A1_new, R1_sq_new, A2_new, R2_sq_new)
+
+
+# ---------------------------------------------------------------------------
+# Valid-range helpers
+# ---------------------------------------------------------------------------
+#
+# These return the (delta_lo, delta_hi) range for which the paired ops
+# are valid given the current state. The descent picks step sizes
+# within this range.
+#
+# Op1 paired with hyperplanes x_k = +b on E_1 and x_k = -b on E_2:
+#   The geometric walls are at c_new[k] = b (E_1 hits its hyperplane)
+#   and c_new[k] = -b (E_2 hits its hyperplane). So
+#       c_new[k] in (-1, 1)   for b in {-1, +1}
+#       delta in (-1 - c[k], 1 - c[k]).
+#   The R_sq > 0 constraint is dominated by the geometric wall when x*
+#   is on E_1's surface and -x* on E_2's (proof: R_sq >= A * (1±c)^2,
+#   which makes the R_sq wall further out than the geometric one).
+#
+# Op2 paired:
+#   Op2 forces c_new[k] to keep the same sign as c[k]. The wall is at
+#   c_new[k] = 0, with no upper magnitude bound (soft degeneracy as
+#   |delta| -> infinity, where A_new[k] -> 0). Range:
+#       c[k] > 0:  delta in (-c[k], +inf)
+#       c[k] < 0:  delta in (-inf, -c[k])
+#       c[k] = 0:  delta = 0 (no motion)
+
+
+def valid_delta_range_op_hyperplane(c, k, b):
+    """Valid (delta_lo, delta_hi) for `paired_op_hyperplane(..., k, b, delta)`.
+
+    Range is bounded: c_new[k] must stay in (-1, 1). Independent of A_i
+    and R_i_sq when x* on E_1 and -x* on E_2 (the geometric walls are
+    tighter than the R_sq > 0 constraint in that regime).
+
+    Inputs:
+        c   : (N,) shared center.
+        k   : coordinate index.
+        b   : hyperplane offset for E_1 (E_2 uses -b). Must be +/-1 for
+              physical meaning, though the formula works for any b.
+
+    Returns:
+        (delta_lo, delta_hi), an open interval. delta = 0 is always inside.
+    """
+    wall_1 = b - c[k]
+    wall_2 = -b - c[k]
+    return (wall_2, wall_1) if wall_2 < wall_1 else (wall_1, wall_2)
+
+
+def valid_delta_range_op_two_plane(c, k):
+    """Valid (delta_lo, delta_hi) for `paired_op_two_plane(..., k, delta)`.
+
+    Range is one-sided unbounded: c_new[k] must keep the same sign as
+    c[k]. If c[k] = 0, no motion is possible (returns (0.0, 0.0)).
+
+    Inputs:
+        c   : (N,) shared center.
+        k   : coordinate index.
+
+    Returns:
+        (delta_lo, delta_hi). One endpoint is +/-inf for c[k] != 0;
+        both are 0 for c[k] = 0.
+    """
+    if abs(c[k]) < 1e-14:
+        return (0.0, 0.0)
+    if c[k] > 0:
+        return (-c[k], float("inf"))
+    return (float("-inf"), -c[k])

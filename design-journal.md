@@ -13,16 +13,49 @@ geometric continuous moves plus discrete escape heuristics to find the unique
 that cluster.
 
 A **dual-ellipsoid surface-preservation design** (§9) is the current
-working design. The construction question — *can we build operations
-that maintain the point-level invariants from (A, b, c, P) alone?* —
-has been answered **yes** for the per-operation case: see
-`surface_preserving_ops.py` and 20 passing tests in
-`test_surface_preserving.py` + `test_two_plane_op.py`.
+working design. The state is **axis-aligned** and bundled into a
+`DualEllipsoidState` dataclass: shared `c` and per-ellipsoid `(A_i, R_i_sq)`.
+Each ellipsoid is `Σ A_i[j](x_j − c[j])² = R_i_sq`. Ellipsoid 1
+carries `x*`; ellipsoid 2 carries `−x*`. We only admit operations
+that preserve shared `c`.
 
-The remaining open question is whether the descent on the four-function
-fitness using these operations actually drives `c` to the segment
-between `x*` and `−x*` in practice. That requires implementing
-`dual_ellipsoid_descent.py` and testing on small-N instances.
+Both operations are implemented and verified (19 passing tests):
+
+- **Op1 (hyperplane `x_k = b`)**: pencil `s·(x_k − b)²`. Moves `c[k]`
+  by chosen `delta`. Commits to a sign hypothesis (I1 holds only if
+  `x*_k = b`); paired version uses `+b` on E_1 and `−b` on E_2.
+- **Op2 (two-plane `x_k² = 1`)**: pencil `M·(x_k² − 1)`. Vanishes on
+  both `x_k = +1` and `x_k = −1`, so preserves both `x*` and `−x*`
+  without committing to a sign. Cannot move `c[k]` from `c[k] = 0`
+  (the formula is forced to return zero motion); needs Op1 to break
+  the `c[k] = 0` symmetry first.
+
+**Why axis-aligned.** In axis-aligned form, the i-th column of each
+shape matrix is parallel to `e_i` automatically, so the natural pencil
+motion is along `e_i`, and a single shared `delta` produces a single
+shared `c_new` on both sides of the paired versions. In general
+(non-axis-aligned) form, the i-th column has off-diagonal components
+and the same parameter on each side moves `c` in different directions,
+breaking shared `c`. Earlier work (§9.5 history) explored a more
+general candidate-A construction for Op1; that worked but introduced
+off-diagonal updates which then broke the analogous Op2. Switching
+fully to axis-aligned makes the math symmetric and clean for both ops.
+
+**Cost of axis-alignment.** Op1's hyperplane must be axis-aligned
+(`a = e_k`). The original problem's constraint hyperplanes (rows of
+the constraint matrix `A` in `Ax = b`, with multiple non-zero ±1
+entries) cannot be encoded as a single Op1 step. The descent will
+need to incorporate them via the fitness function or a separate
+mechanism — open design question.
+
+The remaining open questions are:
+1. How to incorporate the original problem's general constraint
+   hyperplanes given that Op1 only handles axis-aligned ones.
+2. Whether the descent on the four-function fitness using these ops
+   actually drives `c` to the segment in practice.
+
+That requires implementing `dual_ellipsoid_descent.py` and testing on
+small-N instances.
 
 **If you're picking this up to continue working on it, jump to §9.**
 That holds the current candidate algorithm, its correctness analysis,
@@ -573,46 +606,81 @@ without invoking SDP-level computation. Whether this is achievable
 without secretly re-encoding the original problem is the central open
 question.
 
-### 9.5 The construction question — RESOLVED for individual operations
+### 9.5 The construction question — RESOLVED for both Op1 and Op2 (axis-aligned)
 
-**Can operations satisfying I1 (and I2) per individual move, computable
-from (A, b, c, P) alone, actually be constructed?**
+**Can operations satisfying I1 + I2 per individual move AND maintaining
+shared `c`, computable from `(c, A_1, R_1_sq, A_2, R_2_sq, ...)`
+alone, actually be constructed?**
 
-**Status: YES.** Two operations are implemented and verified in
-`surface_preserving_ops.py`:
+**Status: YES for both Op1 and Op2, in axis-aligned form.**
+Implemented in `surface_preserving_ops.py`. The state representation
+is axis-aligned: each ellipsoid is `Σ A[j](x_j − c[j])² = R_sq`, the
+dual-ellipsoid state is `(c, A_1, R_1_sq, A_2, R_2_sq)` with shared
+`c`.
 
-- **Op1 (hyperplane pencil)** — `op_hyperplane_pencil(c, P_inv, a, b, s)`.
-  Adds `s · (a^T x − b)^2` to the quadratic form. Closed-form update:
-  `M = P_inv + s aaᵀ`, `c' = M⁻¹(P_inv c + s b a)`,
-  `R = c'ᵀ M c' − cᵀ P_inv c − s b² + 1`, `P_inv' = M / R`.
-  Calling with `−b` produces the paired operation that preserves `−x*`.
-- **Op2 (two-plane pencil)** — `op_two_plane_pencil(c, P_inv, i, t)`.
-  Adds `t · (x_i² − 1)` to the quadratic form. Same algebraic shape;
-  the rank-1 update is along the coordinate axis `e_i`. Critically,
-  *the same op preserves x\* AND −x\* simultaneously*, since both
-  satisfy `x_i² = 1`.
+**Op1 (axis-aligned hyperplane `x_k = b`)**.
+`op_hyperplane(c, A, R_sq, k, b, delta)` and
+`paired_op_hyperplane(...)`. The pencil `s·(x_k − b)²` is added to the
+form. Re-completing the square in `x_k`:
 
-Verification: 20 tests in `test_surface_preserving.py` and
-`test_two_plane_op.py`, including identity at zero parameter, drift
-under 100-step composition (< 1e-6), `|b| = 3` edge case, dual-ellipsoid
-simultaneous preservation, mixed Op1+Op2 composition (80 ops keep x*
-on surface), validity-bound enforcement, and x*-independence (the op
-output depends only on `(c, P_inv, a, b, s)` or `(c, P_inv, i, t)`,
-never on x\*'s coordinates).
+    newA[k]   = A[k] + s
+    newC[k]   = (A[k]·c[k] + s·b) / (A[k] + s)
+    newR_sq   = R_sq − s·A[k]·(c[k] − b)² / (A[k] + s)
 
-The earlier worry (that the standard ellipsoid-method MVCE update
-falsifies I1, per `archive/analyze_v3.py`) was real: the MVCE is the *wrong*
-construction. The pencil construction is the right one, because it's
-designed to preserve `E ∩ H` (or `E ∩ {x_i² = 1}` for Op2), and x* is
-in those slices when it satisfies the constraint.
+Inverting `newC[k] = c[k] + delta` gives `s = A[k]·delta / (b − c[k] − delta)`.
+Other `A[j]` and `c[j]` are unchanged, so axis-alignment is preserved.
 
-What remains open is **joint reach of the operation family**: with `m`
-hyperplane operations and `N` two-plane operations, we have `m + N`
-parameter knobs per iteration. Whether this provides enough flexibility
-to *also* drive sphericity (f₂ → 0) — which is what the four-function
-fitness needs — is an empirical question that depends on the specific
-landscape of f₂ over the reachable manifold. Will be answered by the
-descent implementation (`dual_ellipsoid_descent.py`, not yet written).
+Op1 commits to a sign hypothesis: I1 holds only if `x*_k = b`. The
+paired version uses `+b` on E_1 and `−b` on E_2 (consistent with
+`−x*_k = −b`); both invariants hold exactly when `x*_k = b`.
+
+**Op2 (two parallel planes `x_k = ±1`)**.
+`op_two_plane(c, A, R_sq, k, delta)` and `paired_op_two_plane(...)`.
+The pencil `M·(x_k² − 1)` is added. Re-completing the square:
+
+    newA[k]   = A[k] + M
+    newC[k]   = A[k]·c[k] / (A[k] + M)
+    newR_sq   = R_sq + M − A[k]·c[k]² + A[k]²·c[k]² / (A[k] + M)
+
+Inverting `newC[k] = c[k] + delta` gives `M = −A[k]·delta / (c[k] + delta)`.
+
+Op2 vanishes on both `x_k = +1` and `x_k = −1`, so it preserves both
+`x*` and `−x*` simultaneously without committing to a sign. Critical
+caveat: when `c[k] = 0`, the formula `newC[k] = A[k]·c[k]/(A[k]+M)` is
+forced to zero regardless of M, so Op2 *cannot* move `c[k]` from the
+origin. The descent must use Op1 first to break the symmetry, after
+which Op2 can move `c[k]` within a range.
+
+**Why axis-aligned makes both ops clean.** In axis-aligned form, the
+i-th column of the (non-inverse) shape matrix is automatically
+parallel to `e_i`. So both pencils' natural motion direction is
+`e_i`, and on the paired versions a single shared `delta` produces a
+single shared new center on both sides. Shared `c` is automatic.
+
+For general (non-axis-aligned) ellipsoids, the i-th column of the
+shape matrix has off-diagonal components and the pencils' motion is
+along that mixed direction. The paired versions then need different
+parameters per side to land at a common new center, and as the two
+ellipsoids' shape matrices diverge under prior ops the directions
+become non-parallel and shared `c` becomes generally infeasible.
+
+**Verification**: 19 passing tests in `test_surface_preserving.py`,
+covering for both Op1 and Op2: identity at zero parameter, motion
+exactly along `e_k` (asserted by coordinate equality), preservation
+of `x*`/`−x*` on the relevant surface, axis-alignment preservation
+under composition, multi-step composition drift bounded, paired
+versions preserve both invariants while A_1 and A_2 actively diverge,
+the kick off origin from the initial sphere, x*-independence of the
+construction, the c[k]=0 obstruction for Op2 raises cleanly, and
+degenerate-parameter handling.
+
+**Cost of axis-alignment**: Op1's hyperplane is restricted to a single
+coordinate (`a = e_k`, with `b ∈ {-1, +1}`). The original problem's
+general sparse-{−1,+1} constraint hyperplanes (rows of `A` with three
+non-zero entries) cannot be encoded directly as a single Op1 step.
+Those constraints have to enter the descent via the fitness function
+or another mechanism. This is the next open question for the descent
+design.
 
 ### 9.6 Implementation tasks if we resurrect this
 
