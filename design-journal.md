@@ -1,12 +1,12 @@
 # Design Journal
 
 **Purpose.** A running record of algorithmic ideas we've considered for this
-problem, what we've concluded about each, and why. Complements `findings.md`
+problem, what we've concluded about each, and why. Complements `archive/findings.md`
 (which holds the empirical audit of the original guess-and-flip design) and
-`ellipsoid-approach.md` (the original design doc, partially falsified).
+`archive/ellipsoid-approach.md` (the original design doc, partially falsified).
 
 **Pick-up-cold summary.** The original guess-and-flip design with continuous
-ellipsoid (analytic-center) fitness is falsified — `findings.md` has concrete
+ellipsoid (analytic-center) fitness is falsified — `archive/findings.md` has concrete
 counterexamples. What remains is a cluster of related ideas centered on using
 geometric continuous moves plus discrete escape heuristics to find the unique
 `x* ∈ {−1,+1}^N` satisfying a sparse `Ax = b` system. This journal captures
@@ -138,7 +138,7 @@ help, only signs matter on the cube.
 
 ### 3.6 Local maxima come from constraint geometry, not from fitness choice
 
-Empirically (findings.md) and theoretically, the number of Hamming-1
+Empirically (archive/findings.md) and theoretically, the number of Hamming-1
 local optima under the discrete residual, under the continuous
 ellipsoid fitness, and under reasonable alternatives tracks the
 *frustration* of the constraint system (how much constraints overlap
@@ -205,7 +205,7 @@ Format: **name** — status — one-line rationale.
 ### 4.1 Tried / falsified
 
 **Guess-and-flip with continuous ellipsoid (analytic-center) fitness.**
-**Falsified** by counterexamples at N = 6, 8, 10 (`findings.md`). `x*`
+**Falsified** by counterexamples at N = 6, 8, 10 (`archive/findings.md`). `x*`
 is frequently not the global max of the continuous fitness; worse, for
 many instances `x*` is not even continuous-feasible. Core claim C3 of
 the original doc is empirically false.
@@ -435,8 +435,8 @@ committing.
 
 ## 7. What's in the test bed and what's missing
 
-**Currently measured** (`experiment_hillclimb.py`, `experiment_v4.py`,
-`counterexample.py`):
+**Currently measured** (`archive/experiment_hillclimb.py`, `archive/experiment_v4.py`,
+`archive/counterexample.py`):
 - Instance generation with verified uniqueness.
 - Discrete residual `‖As−b‖²` hill climb; local-minimum counts,
   success rates.
@@ -601,7 +601,7 @@ output depends only on `(c, P_inv, a, b, s)` or `(c, P_inv, i, t)`,
 never on x\*'s coordinates).
 
 The earlier worry (that the standard ellipsoid-method MVCE update
-falsifies I1, per `analyze_v3.py`) was real: the MVCE is the *wrong*
+falsifies I1, per `archive/analyze_v3.py`) was real: the MVCE is the *wrong*
 construction. The pencil construction is the right one, because it's
 designed to preserve `E ∩ H` (or `E ∩ {x_i² = 1}` for Op2), and x* is
 in those slices when it satisfies the constraint.

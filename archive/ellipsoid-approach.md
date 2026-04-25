@@ -11,10 +11,10 @@
 > - The "no local maxima" argument (C4) was aspirational; it fails
 >   empirically because C3 fails.
 >
-> **For the current working design, see `design-journal.md` §9.** The
+> **For the current working design, see `../design-journal.md` §9.** The
 > geometric intuition about operations preserving surface membership
 > of x* is retained there as the I1/I2 invariants. The pencil-of-
-> ellipsoids construction in `surface_preserving_ops.py` does maintain
+> ellipsoids construction in `../surface_preserving_ops.py` does maintain
 > these invariants; the standard MVCE update from this old document
 > simply was the wrong construction.
 >
