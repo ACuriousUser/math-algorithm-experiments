@@ -1,6 +1,10 @@
-"""Extract a concrete counterexample: an instance where x* is the unique
-hypercube solution, and yet the continuous ellipsoid fitness is higher for
-some OTHER sign pattern."""
+"""Extract a concrete counterexample to the falsified guess-and-flip
+ellipsoid-fitness design: an instance where x* is the unique hypercube
+solution, and yet the continuous ellipsoid fitness is higher for some
+OTHER sign pattern. Produces the example printed in findings.md §3b.
+
+This script tests the OLD (falsified) design. The CURRENT working
+design lives in surface_preserving_ops.py / design-journal.md §9."""
 
 import numpy as np
 import itertools

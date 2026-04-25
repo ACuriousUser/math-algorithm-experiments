@@ -1,5 +1,11 @@
-"""Faster experiment.  Pre-compute all sign patterns as a matrix; use
-vectorised linear-algebra for enumeration and for the discrete residual.
+"""Sweep over (N, m) for the falsified guess-and-flip ellipsoid-fitness
+design. Backs the table and counterexamples in findings.md §3.
+
+Pre-computes all sign patterns as a matrix; uses vectorised
+linear-algebra for enumeration and for the discrete residual.
+
+This script tests the OLD (falsified) design. The CURRENT working
+design lives in surface_preserving_ops.py / design-journal.md §9.
 """
 
 import itertools

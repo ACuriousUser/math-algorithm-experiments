@@ -1,14 +1,20 @@
 """
-Empirical test of guess-and-flip algorithms for the hypercube-vertex-from-
-sparse-linear-constraints problem.
+Core library for the falsified guess-and-flip / ellipsoid-fitness work.
+Backs the empirical findings reported in findings.md.
 
-Setup:
+This is NOT the current working algorithm. The current design (dual-
+ellipsoid surface-preserving operations) lives in surface_preserving_ops.py
+and is documented in design-journal.md §9.
+
+Setup tested here:
   - N variables x_i in {-1, +1}
   - m sparse 3-variable {-1,+1}-coefficient equality constraints A x = b
   - x* is the unique solution
-  - Goal: recover x* by hill-climbing over sign patterns s in {-1,+1}^N
+  - Goal (of the falsified design): recover x* by hill-climbing over sign
+    patterns s in {-1,+1}^N.
 
-Two fitness functions to compare:
+Two fitness functions compared, both empirically inadequate as standalone
+solvers (see findings.md):
   1. Discrete residual  R(s) = ||A s - b||^2   (MINIMIZE)
   2. Continuous ellipsoid fitness
         F(s) = max_c  sum_i [log(s_i c_i) + log(1 - s_i c_i)]
@@ -19,7 +25,7 @@ Two fitness functions to compare:
      becomes  (A * diag(s)) u = b,  and the objective is
         Phi(u) = sum_i [log u_i + log (1 - u_i)].
 
-What to measure (enumerate all 2^N patterns on small N):
+What this script measures (enumerate all 2^N patterns on small N):
   (a) Is s = x* always the unique global optimum of each fitness?
   (b) How many Hamming-1 local optima exist?  Non-x* local optima trap
       the hill-climber.
