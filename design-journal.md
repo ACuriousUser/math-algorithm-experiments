@@ -12,16 +12,22 @@ geometric continuous moves plus discrete escape heuristics to find the unique
 `x* ∈ {−1,+1}^N` satisfying a sparse `Ax = b` system. This journal captures
 that cluster.
 
-A **dual-ellipsoid surface-preservation design** (§9) is being kept alive
-under explicit assumptions about the existence of operations that maintain
-point-level invariants. Under those assumptions it solves the problem
-without a glassy wall. The viability of the assumptions is the key open
-question.
+A **dual-ellipsoid surface-preservation design** (§9) is the current
+working design. The construction question — *can we build operations
+that maintain the point-level invariants from (A, b, c, P) alone?* —
+has been answered **yes** for the per-operation case: see
+`surface_preserving_ops.py` and 20 passing tests in
+`test_surface_preserving.py` + `test_two_plane_op.py`.
+
+The remaining open question is whether the descent on the four-function
+fitness using these operations actually drives `c` to the segment
+between `x*` and `−x*` in practice. That requires implementing
+`dual_ellipsoid_descent.py` and testing on small-N instances.
 
 **If you're picking this up to continue working on it, jump to §9.**
 That holds the current candidate algorithm, its correctness analysis,
-the open construction subgoal, and the suggested next steps. §1–§8 are
-the idea catalog and context.
+the verified-construction status, and the suggested next steps. §1–§8
+are the idea catalog and context.
 
 ---
 
@@ -561,29 +567,46 @@ without invoking SDP-level computation. Whether this is achievable
 without secretly re-encoding the original problem is the central open
 question.
 
-### 9.5 The open construction question
+### 9.5 The construction question — RESOLVED for individual operations
 
-**Can operations satisfying I1–I3, computable from (A, b, c, P) alone,
-actually be constructed?**
+**Can operations satisfying I1 (and I2) per individual move, computable
+from (A, b, c, P) alone, actually be constructed?**
 
-Status: unresolved. What we know:
+**Status: YES.** Two operations are implemented and verified in
+`surface_preserving_ops.py`:
 
-- The standard ellipsoid-method MVCE update **does NOT preserve I1**.
-  Verified empirically by `analyze_v3.py` on N=3: after one cut, x*
-  ended up *outside* the new ellipsoid (cost 1.22 > 1).
-- The original `ellipsoid-approach.md` claimed I1 in the abstract, but
-  the empirical falsification in `analyze_v3.py` is what triggered the
-  pivot in commit `bea6d45` away from the shrink-ellipsoid framing.
-- "Pencil of ellipsoids" constructions (preserving E ∩ H_k for a chosen
-  hyperplane H_k) DO preserve x* on surface for the constraint they're
-  applied to, since x* ∈ E ∩ H_k. So *single-constraint* operations
-  preserving I1 are clearly possible.
-- The harder question is whether multi-step operations (using all m
-  constraints, plus the box, plus a sphericity drive) can *jointly*
-  preserve I1–I3. The "pencil" gives 1 free parameter per constraint;
-  full sphericity is N(N+1)/2 − 1 constraints on the shape matrix.
-  With m = N/3 free parameters from constraints, full sphericity may
-  be impossible to enforce while preserving I1; only approximate.
+- **Op1 (hyperplane pencil)** — `op_hyperplane_pencil(c, P_inv, a, b, s)`.
+  Adds `s · (a^T x − b)^2` to the quadratic form. Closed-form update:
+  `M = P_inv + s aaᵀ`, `c' = M⁻¹(P_inv c + s b a)`,
+  `R = c'ᵀ M c' − cᵀ P_inv c − s b² + 1`, `P_inv' = M / R`.
+  Calling with `−b` produces the paired operation that preserves `−x*`.
+- **Op2 (two-plane pencil)** — `op_two_plane_pencil(c, P_inv, i, t)`.
+  Adds `t · (x_i² − 1)` to the quadratic form. Same algebraic shape;
+  the rank-1 update is along the coordinate axis `e_i`. Critically,
+  *the same op preserves x\* AND −x\* simultaneously*, since both
+  satisfy `x_i² = 1`.
+
+Verification: 20 tests in `test_surface_preserving.py` and
+`test_two_plane_op.py`, including identity at zero parameter, drift
+under 100-step composition (< 1e-6), `|b| = 3` edge case, dual-ellipsoid
+simultaneous preservation, mixed Op1+Op2 composition (80 ops keep x*
+on surface), validity-bound enforcement, and x*-independence (the op
+output depends only on `(c, P_inv, a, b, s)` or `(c, P_inv, i, t)`,
+never on x\*'s coordinates).
+
+The earlier worry (that the standard ellipsoid-method MVCE update
+falsifies I1, per `analyze_v3.py`) was real: the MVCE is the *wrong*
+construction. The pencil construction is the right one, because it's
+designed to preserve `E ∩ H` (or `E ∩ {x_i² = 1}` for Op2), and x* is
+in those slices when it satisfies the constraint.
+
+What remains open is **joint reach of the operation family**: with `m`
+hyperplane operations and `N` two-plane operations, we have `m + N`
+parameter knobs per iteration. Whether this provides enough flexibility
+to *also* drive sphericity (f₂ → 0) — which is what the four-function
+fitness needs — is an empirical question that depends on the specific
+landscape of f₂ over the reachable manifold. Will be answered by the
+descent implementation (`dual_ellipsoid_descent.py`, not yet written).
 
 ### 9.6 Implementation tasks if we resurrect this
 

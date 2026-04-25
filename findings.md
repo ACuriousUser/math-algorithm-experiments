@@ -200,6 +200,3 @@ reality is different:
   prints landscape statistics.
 - `counterexample.py` — finds and prints an instance where x* is
   continuous-feasible but another sign pattern has higher fitness.
-- `continuous_only.py` — earlier variant used during debugging.
-- `experiment_v2.py`, `experiment_v3.py` — earlier variants superseded
-  by v4; keeping them for reference on what we tried.

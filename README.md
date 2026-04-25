@@ -47,5 +47,13 @@ next piece of work.
   guess-and-flip iteration. Retained for reference; core claims
   (specifically, the C3 "correct guess has highest fitness" claim)
   are empirically falsified; see `findings.md`.
-- `experiment_*.py`, `analyze_*.py` — small-N test bed and diagnostic
-  scripts.
+- `experiment_hillclimb.py`, `experiment_v4.py`, `counterexample.py` —
+  small-N test bed (instance generator, discrete and continuous fitness,
+  hill climb, local-optimum counter, sweep, counterexample finder).
+- `analyze_v3.py` — historical artifact: empirically falsified the
+  "x* on surface" invariant under the standard MVCE update for the
+  shrink-ellipsoid design (`design-journal.md` §9.5).
+- `surface_preserving_ops.py` — the two surface-preserving ellipsoid
+  operations (Op1 = hyperplane pencil, Op2 = two-plane / box pencil).
+- `test_surface_preserving.py`, `test_two_plane_op.py` — tests verifying
+  I1 (and I2 for Op2) under each operation and their compositions.
