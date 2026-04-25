@@ -483,12 +483,18 @@ compare against.
 
 ---
 
-## 9. Dual-ellipsoid surface-preserving design (under explicit assumption)
+## 9. Dual-ellipsoid surface-preserving design
 
-This is a candidate algorithm whose correctness depends on whether a
-specific family of ellipsoid-shaping operations can be constructed.
-Recording it here in case the operations turn out to exist; the
-construction question is the open subgoal.
+The current candidate algorithm. Maintains two ellipsoids whose surfaces
+contain x* and −x* respectively, and minimizes a four-function fitness
+to drive a shared center to the segment between them.
+
+The per-operation construction question (can we maintain the surface
+invariants from (A, b, c, P) alone?) is **resolved** — see §9.5 and
+`surface_preserving_ops.py`. The remaining open question is whether the
+descent algorithm using these operations actually drives c to the
+segment in practice. That requires implementing
+`dual_ellipsoid_descent.py` and testing.
 
 ### 9.1 The assumed invariants (I1–I3)
 
