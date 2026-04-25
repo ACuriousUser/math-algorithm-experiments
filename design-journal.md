@@ -13,49 +13,49 @@ geometric continuous moves plus discrete escape heuristics to find the unique
 that cluster.
 
 A **dual-ellipsoid surface-preservation design** (§9) is the current
-working design. The state is **axis-aligned** and bundled into a
-`DualEllipsoidState` dataclass: shared `c` and per-ellipsoid `(A_i, R_i_sq)`.
-Each ellipsoid is `Σ A_i[j](x_j − c[j])² = R_i_sq`. Ellipsoid 1
-carries `x*`; ellipsoid 2 carries `−x*`. We only admit operations
-that preserve shared `c`.
+working design. The state is **axis-aligned with shared center AND
+shared per-axis stiffness**, bundled into a `DualEllipsoidState`
+dataclass: `(c, A, R_1_sq, R_2_sq)`. Each ellipsoid is
+`Σ A[j](x_j − c[j])² = R_i_sq`. Ellipsoid 1 carries `x*`; ellipsoid 2
+carries `−x*`. The two ellipsoids differ only in the scalars
+`R_1_sq, R_2_sq`.
 
-Both operations are implemented and verified (19 passing tests):
+Both operations are implemented and verified (24 passing tests):
 
-- **Op1 (hyperplane `x_k = b`)**: pencil `s·(x_k − b)²`. Moves `c[k]`
-  by chosen `delta`. Commits to a sign hypothesis (I1 holds only if
-  `x*_k = b`); paired version uses `+b` on E_1 and `−b` on E_2.
-- **Op2 (two-plane `x_k² = 1`)**: pencil `M·(x_k² − 1)`. Vanishes on
-  both `x_k = +1` and `x_k = −1`, so preserves both `x*` and `−x*`
-  without committing to a sign. Cannot move `c[k]` from `c[k] = 0`
-  (the formula is forced to return zero motion); needs Op1 to break
-  the `c[k] = 0` symmetry first.
+- **Op1 (general sparse hyperplane `aᵀx = b`)**: **linear pencil**
+  `M·(aᵀx − b)`. Updates `(c, R_1_sq, R_2_sq)`; `A` is unchanged.
+  Handles any sparse hyperplane normal `a` (multiple non-zero entries
+  fine). Paired version uses `+b` on E_1 and `−b` on E_2; shared `c`
+  and shared `A` automatic. M is unbounded (newR_i_sq > 0 for any M
+  by Cauchy-Schwarz, as long as x* on E_1 and −x* on E_2).
+- **Op2 (two-plane `x_k² = 1`)**: quadratic pencil `M·(x_k² − 1)`.
+  Vanishes on both `x_k = +1` and `x_k = −1`, so preserves both `x*`
+  and `−x*` without committing to a sign. Updates `(c, A, R_1_sq, R_2_sq)`
+  for one coordinate; paired version preserves shared A. Cannot move
+  `c[k]` from `c[k] = 0`; needs Op1 to break the symmetry first.
 
-**Why axis-aligned.** In axis-aligned form, the i-th column of each
-shape matrix is parallel to `e_i` automatically, so the natural pencil
-motion is along `e_i`, and a single shared `delta` produces a single
-shared `c_new` on both sides of the paired versions. In general
-(non-axis-aligned) form, the i-th column has off-diagonal components
-and the same parameter on each side moves `c` in different directions,
-breaking shared `c`. Earlier work (§9.5 history) explored a more
-general candidate-A construction for Op1; that worked but introduced
-off-diagonal updates which then broke the analogous Op2. Switching
-fully to axis-aligned makes the math symmetric and clean for both ops.
+**Why the linear pencil for Op1.** Earlier we tried a quadratic
+pencil `s·(aᵀx − b)²` for Op1, which introduces cross terms
+`s·a_i·a_j` that break axis-alignment when `a` has multiple non-zero
+entries. The linear pencil `M·(aᵀx − b)` has no quadratic part at
+all, so axis-alignment is preserved trivially. With shared `A`
+across both ellipsoids, the c-motion direction `−M·a/(2·A)` is
+identical on E_1 and E_2 — shared `c` is automatic with a single
+shared parameter `M`. This is the construction used in prior working
+code (referenced by the user with concrete snippet) and is the
+natural axis-aligned analogue of the candidate-A motion-along-a idea
+from earlier sections.
 
-**Cost of axis-alignment.** Op1's hyperplane must be axis-aligned
-(`a = e_k`). The original problem's constraint hyperplanes (rows of
-the constraint matrix `A` in `Ax = b`, with multiple non-zero ±1
-entries) cannot be encoded as a single Op1 step. The descent will
-need to incorporate them via the fitness function or a separate
-mechanism — open design question.
+**No cost of axis-alignment.** Op1 with the linear pencil handles
+arbitrary sparse hyperplanes — including the original problem's `m`
+constraint rows of `Ax = b` directly. There is no need to route those
+constraints through fitness only; they enter the per-step ellipsoid
+update.
 
-The remaining open questions are:
-1. How to incorporate the original problem's general constraint
-   hyperplanes given that Op1 only handles axis-aligned ones.
-2. Whether the descent on the four-function fitness using these ops
-   actually drives `c` to the segment in practice.
-
-That requires implementing `dual_ellipsoid_descent.py` and testing on
-small-N instances.
+The remaining open question is whether the descent on the
+four-function fitness using these ops actually drives `c` to the
+segment in practice. That requires implementing
+`dual_ellipsoid_descent.py` and testing on small-N instances.
 
 **If you're picking this up to continue working on it, jump to §9.**
 That holds the current candidate algorithm, its correctness analysis,
@@ -606,81 +606,93 @@ without invoking SDP-level computation. Whether this is achievable
 without secretly re-encoding the original problem is the central open
 question.
 
-### 9.5 The construction question — RESOLVED for both Op1 and Op2 (axis-aligned)
+### 9.5 The construction question — RESOLVED for both Op1 and Op2 (axis-aligned, shared A)
 
 **Can operations satisfying I1 + I2 per individual move AND maintaining
-shared `c`, computable from `(c, A_1, R_1_sq, A_2, R_2_sq, ...)`
-alone, actually be constructed?**
+shared `c` and shared `A`, handling general sparse hyperplanes for
+Op1 and the box constraint for Op2, computable from
+`(c, A, R_1_sq, R_2_sq, ...)` alone, actually be constructed?**
 
-**Status: YES for both Op1 and Op2, in axis-aligned form.**
-Implemented in `surface_preserving_ops.py`. The state representation
-is axis-aligned: each ellipsoid is `Σ A[j](x_j − c[j])² = R_sq`, the
-dual-ellipsoid state is `(c, A_1, R_1_sq, A_2, R_2_sq)` with shared
-`c`.
+**Status: YES for both Op1 and Op2.** State representation is
+axis-aligned with shared `c` and shared `A`: each ellipsoid is
+`Σ A[j](x_j − c[j])² = R_i_sq`. The dual-ellipsoid state is
+`(c, A, R_1_sq, R_2_sq)` — only the scalars `R_i_sq` differ between
+the two ellipsoids.
 
-**Op1 (axis-aligned hyperplane `x_k = b`)**.
-`op_hyperplane(c, A, R_sq, k, b, delta)` and
-`paired_op_hyperplane(...)`. The pencil `s·(x_k − b)²` is added to the
-form. Re-completing the square in `x_k`:
+**Op1 (general sparse hyperplane `aᵀx = b`)**.
+`op_hyperplane(c, A, R_sq, a, b, M)` and `paired_op_hyperplane(state, a, b, M)`.
+The **linear pencil** `M·(aᵀx − b)` is added to the form. Crucially,
+this is *linear* in x, not quadratic — it adds NO quadratic cross
+terms `a_i·a_j`, so axis-alignment is preserved trivially regardless
+of how many non-zero entries `a` has.
 
-    newA[k]   = A[k] + s
-    newC[k]   = (A[k]·c[k] + s·b) / (A[k] + s)
-    newR_sq   = R_sq − s·A[k]·(c[k] − b)² / (A[k] + s)
+    newA[i]   = A[i]                                 (unchanged)
+    newC[i]   = c[i] − M · a[i] / (2 · A[i])
+    newR_1_sq = R_1_sq + M·b   + Σ A · (newC² − c²)
+    newR_2_sq = R_2_sq − M·b   + Σ A · (newC² − c²)
 
-Inverting `newC[k] = c[k] + delta` gives `s = A[k]·delta / (b − c[k] − delta)`.
-Other `A[j]` and `c[j]` are unchanged, so axis-alignment is preserved.
+For paired Op1, `+b` is used on E_1 and `−b` on E_2 (preserving x*
+on E_1 with `aᵀx* = b`, and −x* on E_2 with `aᵀ(−x*) = −b`). With
+shared A, the same M produces the same `newC` on both sides
+automatically — shared c and shared A maintained. R_1_sq and R_2_sq
+diverge by `2·M·b` per call.
 
-Op1 commits to a sign hypothesis: I1 holds only if `x*_k = b`. The
-paired version uses `+b` on E_1 and `−b` on E_2 (consistent with
-`−x*_k = −b`); both invariants hold exactly when `x*_k = b`.
+**Validity of M is unbounded.** Cauchy-Schwarz gives
+`(b − aᵀc)² ≤ R_i_sq · Σ a²/A` (precisely the condition that x* /
+−x* is on its respective surface). This makes the discriminant of
+the parabola `newR_i_sq(M) = R_i_sq + M·(b' − aᵀc) + M²·Σ a²/(4A)`
+non-positive, so `newR_i_sq > 0` for any M.
+
+**Why the linear pencil instead of the earlier quadratic pencil.**
+The quadratic pencil `s·(aᵀx − b)²` adds `s·a aᵀ` to the shape
+matrix, which has off-diagonal entries `s·a_i·a_j` whenever `a` has
+multiple non-zero entries. Those break axis-alignment. The linear
+pencil has no quadratic part at all — only the linear part of the
+form changes, which translates the center along `a/A` (componentwise)
+without touching A. This construction matches prior working code's
+`getMinimalEllipsoidFromIntersectionWithHyperPlane`, where the M
+chosen there is the value that minimizes newR² for a single
+ellipsoid; for the descent, M is a free parameter.
 
 **Op2 (two parallel planes `x_k = ±1`)**.
-`op_two_plane(c, A, R_sq, k, delta)` and `paired_op_two_plane(...)`.
-The pencil `M·(x_k² − 1)` is added. Re-completing the square:
+`op_two_plane(c, A, R_sq, k, delta)` and `paired_op_two_plane(state, k, delta)`.
+Quadratic pencil `M·(x_k² − 1)` vanishes on `x_k = +1` and `x_k = −1`,
+preserving both x* and −x* without committing to a sign. The added
+term affects only the (k,k) diagonal entry of the shape matrix, so
+axis-alignment is preserved.
 
-    newA[k]   = A[k] + M
-    newC[k]   = A[k]·c[k] / (A[k] + M)
-    newR_sq   = R_sq + M − A[k]·c[k]² + A[k]²·c[k]² / (A[k] + M)
+    M         = −A[k] · delta / (c[k] + delta)
+    newA[k]   = A[k] + M = A[k] · c[k] / (c[k] + delta)
+    newC[k]   = c[k] + delta
+    newR_i_sq = R_i_sq + M − A[k]·c[k]² + A[k]²·c[k]² / (A[k] + M)
 
-Inverting `newC[k] = c[k] + delta` gives `M = −A[k]·delta / (c[k] + delta)`.
+Paired Op2 uses the same delta on both sides; with shared A, both
+sides compute the same M, so `newA[k]` is identical on both — shared
+A preserved. R_1_sq − R_2_sq is unchanged by paired Op2.
 
-Op2 vanishes on both `x_k = +1` and `x_k = −1`, so it preserves both
-`x*` and `−x*` simultaneously without committing to a sign. Critical
-caveat: when `c[k] = 0`, the formula `newC[k] = A[k]·c[k]/(A[k]+M)` is
-forced to zero regardless of M, so Op2 *cannot* move `c[k]` from the
+Critical caveat: when `c[k] = 0`, the formula `newC[k] = A[k]·c[k]/(A[k]+M)`
+is forced to zero regardless of M, so Op2 cannot move `c[k]` from the
 origin. The descent must use Op1 first to break the symmetry, after
-which Op2 can move `c[k]` within a range.
+which Op2 can move `c[k]` within `(−c[k], +∞)` (if `c[k] > 0`) or
+`(−∞, −c[k])` (if `c[k] < 0`).
 
-**Why axis-aligned makes both ops clean.** In axis-aligned form, the
-i-th column of the (non-inverse) shape matrix is automatically
-parallel to `e_i`. So both pencils' natural motion direction is
-`e_i`, and on the paired versions a single shared `delta` produces a
-single shared new center on both sides. Shared `c` is automatic.
-
-For general (non-axis-aligned) ellipsoids, the i-th column of the
-shape matrix has off-diagonal components and the pencils' motion is
-along that mixed direction. The paired versions then need different
-parameters per side to land at a common new center, and as the two
-ellipsoids' shape matrices diverge under prior ops the directions
-become non-parallel and shared `c` becomes generally infeasible.
-
-**Verification**: 19 passing tests in `test_surface_preserving.py`,
+**Verification**: 24 passing tests in `test_surface_preserving.py`,
 covering for both Op1 and Op2: identity at zero parameter, motion
-exactly along `e_k` (asserted by coordinate equality), preservation
-of `x*`/`−x*` on the relevant surface, axis-alignment preservation
-under composition, multi-step composition drift bounded, paired
-versions preserve both invariants while A_1 and A_2 actively diverge,
-the kick off origin from the initial sphere, x*-independence of the
-construction, the c[k]=0 obstruction for Op2 raises cleanly, and
-degenerate-parameter handling.
+direction (Op1 along `a/A` componentwise, Op2 along `e_k`),
+preservation of x* and −x* under general sparse hyperplane normals,
+axis-alignment preserved (A unchanged by Op1, A diagonal-only update
+by Op2), unbounded-M validity for Op1, mixed long-horizon
+composition of Op1+Op2 paired ops, the kick off origin via Op1 with
+general sparse a, the c[k]=0 obstruction for Op2 raises cleanly,
+shared-A invariant under both ops, R-divergence pattern (2·M·b for
+Op1, zero for Op2), range-helper correctness, and
+DualEllipsoidState immutable updates.
 
-**Cost of axis-alignment**: Op1's hyperplane is restricted to a single
-coordinate (`a = e_k`, with `b ∈ {-1, +1}`). The original problem's
-general sparse-{−1,+1} constraint hyperplanes (rows of `A` with three
-non-zero entries) cannot be encoded directly as a single Op1 step.
-Those constraints have to enter the descent via the fitness function
-or another mechanism. This is the next open question for the descent
-design.
+**No cost of axis-alignment.** Op1 with the linear pencil handles
+arbitrary sparse hyperplanes — including the original problem's `m`
+constraint rows of `Ax = b` directly. There is no need to route
+those constraints through fitness only; they enter the per-step
+ellipsoid update.
 
 ### 9.6 Implementation tasks if we resurrect this
 

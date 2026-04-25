@@ -32,16 +32,17 @@ recovers `x*`. Correctness is proven by triangle inequality — the
 segment is the unique minimizer, no basins, no glassy-wall
 obstruction.
 
-Each ellipsoid is parameterized by `(c, A, R_sq)` where the equation
-is `Σ A[j] (x_j - c[j])² = R_sq`. The dual-ellipsoid state — shared
-center `c`, separate `(A_i, R_i_sq)` per ellipsoid — is bundled into
-a `DualEllipsoidState` dataclass:
+Both ellipsoids share **center `c` AND per-axis stiffness `A`**:
+
+    E_i = { x : Σ_j A[j] (x_j − c[j])² = R_i_sq }
+
+Only the scalars `R_1_sq` and `R_2_sq` differ between them. The
+`DualEllipsoidState` dataclass bundles `(c, A, R_1_sq, R_2_sq)`:
 
 ```python
-state = DualEllipsoidState.initial_sphere(N)   # c=0, A=ones, R_sq=N
-state = paired_op_hyperplane(state, k, b, delta)
-state = paired_op_two_plane(state, k, delta)
-lo, hi = state.valid_range_hyperplane(k, b)
+state = DualEllipsoidState.initial_sphere(N)   # c=0, A=ones, R=N
+state = paired_op_hyperplane(state, a, b, M)   # general sparse a
+state = paired_op_two_plane(state, k, delta)   # box constraint x_k^2=1
 lo, hi = state.valid_range_two_plane(k)
 ok, val = state.x_on_E1(x_star)
 ok, val = state.x_on_E2(-x_star)
@@ -51,27 +52,31 @@ Paired ops are immutable: each call returns a new state.
 
 Two operations are implemented in `surface_preserving_ops.py`:
 
-- **Op1 (axis-aligned hyperplane `x_k = b`)**: pencil
-  `s · (x_k - b)²` preserves any point with `x_k = b`. Moves c[k] by
-  a chosen `delta` along `e_k`; A[k] and R_sq update. Commits to a
-  sign hypothesis: I1 holds only when `b = x*_k`. Paired version uses
-  `+b` on E_1 and `-b` on E_2 (consistent with `-x*_k = -b`).
+- **Op1 (general sparse hyperplane `aᵀx = b`)**: **linear pencil**
+  `M · (aᵀx − b)`. The added term has no quadratic part, so it does
+  not introduce any off-diagonal cross terms — axis-alignment is
+  preserved for *any* sparse `a` (multiple non-zero entries are fine).
+  The motion is `newC[i] = C[i] − M·a[i]/(2·A[i])`; `A` is unchanged.
+  Paired version uses `+b` on E_1 and `−b` on E_2; with shared `A`,
+  the same `M` lands both ellipsoids at the same new center
+  automatically. `R_1_sq` and `R_2_sq` diverge by `2·M·b` per call.
+  By Cauchy-Schwarz the new R values stay positive for any `M`, so
+  the parameter is unbounded.
 
-- **Op2 (two parallel planes `x_k = ±1`)**: pencil
-  `M · (x_k² - 1)` preserves any vertex with `x_k² = 1`, so it
-  preserves both x* and -x* simultaneously without committing to a
-  sign. Cannot move `c[k]` from `c[k] = 0` (formula is forced to
-  return zero motion). Use Op1 to break the `c[k] = 0` symmetry first.
+- **Op2 (two parallel planes `x_k = ±1`)**: quadratic pencil
+  `M · (x_k² − 1)` vanishes on `x_k² = 1`, preserving both x* and -x*
+  without committing to a sign. Affects only the (k,k) diagonal of
+  the shape, so axis-alignment is preserved. Paired version uses the
+  same `delta` on both sides; shared `A` and shared `c` are
+  preserved. Cannot move `c[k]` from `c[k] = 0` — the formula is
+  forced to return zero motion. Use Op1 to break the symmetry first.
 
-The axis-aligned form makes the math much simpler than the general
-case: because each ellipsoid's i-th column of the shape matrix is
-parallel to `e_i`, the natural pencil motion is automatically along
-`e_i`, so a single shared `delta` on both sides of the paired version
-lands at the same new center. The cost is that Op1's hyperplane must
-be axis-aligned (`a = e_k`); the original problem's general
-constraint hyperplanes (rows of A with multiple nonzero entries)
-cannot enter the per-step update directly. They must enter through
-the descent's fitness function or a separate mechanism.
+**Why this works**: the linear pencil for Op1 was the missing piece.
+The earlier quadratic pencil `s·(aᵀx − b)²` introduces cross terms
+`s·a_i·a_j` that break axis-alignment when `a` has multiple non-zero
+entries. The linear pencil has no cross terms at all, so it works
+for any sparse `a`. The original problem's `m` constraint hyperplanes
+from `Ax = b` therefore enter the per-step ellipsoid update directly.
 
 ### Document map
 
@@ -87,26 +92,28 @@ the descent's fitness function or a separate mechanism.
   `state.valid_range_*` methods) return the valid delta interval
   given the current state, so the descent can pick step sizes without
   trial-and-error.
-- `test_surface_preserving.py` — 28 tests covering identity, motion
-  along `e_k`, axis-alignment preservation, x* preservation,
-  composition drift, paired versions' shared-c invariant under
-  divergence of A1/A2, the kick off origin, the c[k]=0 obstruction
-  for Op2, degenerate-input handling, range-helper correctness
-  (endpoints exactly where the op transitions from valid to invalid),
-  and `DualEllipsoidState` construction / immutable updates.
+- `test_surface_preserving.py` — 24 tests covering identity, motion
+  direction, axis-alignment preservation under both ops, x* and -x*
+  preservation under general sparse hyperplanes, unbounded-M
+  validity for Op1, mixed long-horizon composition of Op1+Op2, the
+  kick off origin via Op1 with general sparse a, the c[k]=0
+  obstruction for Op2, shared-A invariant under both ops, R-divergence
+  pattern (Op1 changes R_1−R_2 by 2·M·b, Op2 leaves it unchanged),
+  range-helper correctness, and DualEllipsoidState immutable updates.
 
 ### Valid-delta ranges
 
-Given the current state, each paired op has a delta range within
+Given the current state, each paired op has a parameter range within
 which the call succeeds:
 
-- **Paired Op1** (hyperplanes `x_k = b` on E_1, `x_k = -b` on E_2):
-  `delta ∈ (-1 - c[k], 1 - c[k])` — equivalently `c_new[k] ∈ (-1, 1)`.
-  Bounded interval; independent of A_i and R_i_sq when x* is on E_1
-  and -x* on E_2.
-- **Paired Op2** (two-plane `x_k^2 = 1`):
-  `delta ∈ (-c[k], +∞)` if `c[k] > 0`,
-  `delta ∈ (-∞, -c[k])` if `c[k] < 0`,
+- **Paired Op1** (general hyperplane `aᵀx = b` on E_1, `−b` on E_2):
+  `M ∈ ℝ` — unbounded. Cauchy-Schwarz on `(b − aᵀC)² ≤ R_i_sq · Σ a²/A`
+  (the condition that x* / −x* is on its respective surface) makes the
+  discriminant of the parabola `newR_i_sq(M)` non-positive, so
+  `newR_i_sq > 0` for any M.
+- **Paired Op2** (two-plane `x_k² = 1`):
+  `delta ∈ (−c[k], +∞)` if `c[k] > 0`,
+  `delta ∈ (−∞, −c[k])` if `c[k] < 0`,
   `delta = 0` if `c[k] = 0`.
   One-sided unbounded; the wall is at `c_new[k] = 0` (Op2 cannot move
   c[k] across zero).
