@@ -1,7 +1,95 @@
 """
-Surface-preserving ellipsoid operation (Op1 — hyperplane).
+Surface-preserving ellipsoid operations.
 
-Construction: pencil of ellipsoids preserving E ∩ H.
+Two operations on the joint state (c, P_inv) of an ellipsoid
+E = { x : (x - c)^T P_inv (x - c) <= 1 }:
+
+  Op1: op_hyperplane_pencil(c, P_inv, a, b, s)
+       Updates the ellipsoid using a hyperplane H: a^T x = b.
+
+  Op2: op_two_plane_pencil(c, P_inv, i, t)
+       Updates the ellipsoid using the pair of planes x_i = +1 and x_i = -1.
+
+Both operations preserve the surface-membership invariant:
+  if x* is on the surface of E AND x* satisfies the constraint, then x*
+  is on the surface of the new ellipsoid.
+
+For Op1: x* must satisfy a^T x* = b. Using -b instead preserves -x* (the
+"paired" form). For Op2: x* must satisfy x_i^2 = 1, which is true for any
+±1 vertex. So Op2 preserves x* and -x* simultaneously with a single call.
+
+The operations are computable from (c, P_inv, a, b, s) or
+(c, P_inv, i, t) alone — they never reference x*'s coordinates.
+
+==============================================================================
+PARAMETERIZATION (how the parameter controls the "push")
+==============================================================================
+
+Op1 -- parameter s
+------------------
+  Identity at s = 0. Valid range: s in (-1/(a^T P a), +infinity).
+
+  The new center moves along direction P*a (the hyperplane normal in
+  the ellipsoid metric):
+
+        c' - c = [ s / (1 + s * a^T P a) ] * (b - a^T c) * P a
+
+  The factor (b - a^T c) is the signed distance from c to H (scaled by
+  ||a||^2), so the direction of motion automatically aligns with which
+  side of H the center is on.
+
+  Reading:
+    s > 0  -> push c toward and past the hyperplane (deeper into the
+              half-space the plane fences off).
+    s < 0  -> push c away from the hyperplane (deeper into the side
+              already chosen).
+    |s|    -> magnitude of push. Saturates at 1/(a^T P a) for s -> +inf;
+              ellipsoid degenerates as s -> -1/(a^T P a) from above.
+
+  Practical step sizing:
+    The natural scale is 1/(a^T P a). Bounding |s * a^T P a| < 0.5
+    keeps the operation well within its valid range and avoids
+    numerical degeneracy. The composition tests use this bound.
+
+Op2 -- parameter t
+------------------
+  Identity at t = 0. Valid range: t > -P_inv[i, i].
+
+  The new center moves along the i-th column of P:
+
+        c' - c = [ -t * c_i / (1 + t * P_inv[i,i]) ] * P[:, i]
+
+  Looking at just the i-th coordinate:
+
+        c'_i - c_i = -t * c_i * P_inv[i,i] / (1 + t * P_inv[i,i])
+
+  Reading:
+    t > 0  -> pull c_i toward zero (centering, away from both walls
+              x_i = +1 and x_i = -1).
+    t < 0  -> push c_i away from zero (spreading, toward whichever wall
+              c_i is already closer to).
+    |t|    -> magnitude of push. Saturates at 1/P_inv[i, i] for
+              t -> +inf; ellipsoid degenerates as t -> -P_inv[i, i]
+              from above.
+
+  Practical step sizing:
+    A safe range is |t * P_inv[i,i]| < 0.5. The composition tests use
+    t in (-0.3 * P_inv[i,i], +0.5 * P_inv[i,i]).
+
+Note on units
+-------------
+Neither parameter is arc-length: the same numerical s applied across
+two hyperplanes (or t applied across two coordinates) will produce
+different actual displacements of c, because the conversion involves
+a^T P a or P_inv[i, i] which depend on the current shape P. For
+gradient-based descent on a fitness function, this is fine -- the
+optimizer's rescaling absorbs the dimensional factors.
+
+==============================================================================
+CONSTRUCTION DETAILS (Op1)
+==============================================================================
+
+Pencil of ellipsoids preserving E ∩ H.
 
   Given E_0 = { x : (x - c)^T P^{-1} (x - c) <= 1 }
   and hyperplane H = { x : a^T x = b }
